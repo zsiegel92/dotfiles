@@ -1,0 +1,30 @@
+getPrUrlFromCommitHash() {
+    if [ -z "$1" ]; then
+        echo "Usage: getPrUrlFromCommitHash <commit-hash>"
+        return 1
+    fi
+
+    local commit_hash="$1"
+    local remote_url=$(git remote get-url origin)
+
+    # Extract owner/repo from remote URL
+    local repo_path=$(echo "$remote_url" | sed -E 's/.*[:|\/]([^\/]+\/[^\/]+)\.git$/\1/')
+
+    # Get commit message and look for PR number
+    local commit_msg=$(git show --format="%s" -s "$commit_hash" 2>/dev/null)
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Commit hash not found"
+        return 1
+    fi
+
+    # Extract PR number from commit message (format: "... (#1234)")
+    local pr_number=$(echo "$commit_msg" | grep -oE '\(#[0-9]+\)' | grep -oE '[0-9]+')
+
+    if [ -z "$pr_number" ]; then
+        echo "No PR number found in commit message: $commit_msg"
+        return 1
+    fi
+
+    echo "https://github.com/$repo_path/pull/$pr_number"
+}

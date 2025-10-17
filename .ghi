@@ -1,0 +1,32 @@
+ghi(){
+state="open"
+search_query="involves:@me"
+
+case "$1" in
+  --all|-a)
+    state="open"
+    ;;
+  -r)
+    state="open"
+    search_query="review-requested:@me -review:approved"
+    ;;
+  -d|--done)
+    state="closed"
+    ;;
+  *)
+    # default: open PRs involving you
+    ;;
+esac
+json_fields='number,title,author,updatedAt,reviewDecision,isDraft,state,mergeable,mergeStateStatus,headRefName'
+template='{{- range . }}{{ .number }}{{ if and (ne .mergeable "MERGEABLE") (ne .mergeable "UNKNOWN") }} {{ color "red" .mergeable }}{{ end }}{{ if and (ne .mergeStateStatus "CLEAN") (ne .mergeStateStatus "UNKNOWN") }} {{ color "red" .mergeStateStatus }}{{ end }}{{ if .isDraft }} {{ color "gray" "DRAFT" }}{{ end }}{{ if eq .state "MERGED" }} {{ color "magenta" .state }}{{ else if ne .state "OPEN" }} {{ .state }}{{ end }} ({{- if eq .reviewDecision "APPROVED" }}{{ color "green" .reviewDecision }}  {{- else if eq .reviewDecision "CHANGES_REQUESTED" }}{{ color "red" .reviewDecision }}  {{- else }}{{ color "yellow" .reviewDecision }}  {{- end }} {{ .author.login }}): {{ .title }} — {{ .updatedAt }} {{ .headRefName }} {{- "\n" }}{{- end }}'
+GH_FORCE_TTY=1 gh pr list \
+      --state "$state" \
+      --search "$search_query" \
+      --json "$json_fields" \
+      --template "$template"
+}
+
+wghi(){
+  watch --color -n 5  'zsh -c "source ~/.zshrc && ghi"'
+}
+# ghi $@

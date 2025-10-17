@@ -1,0 +1,63 @@
+
+function listCommitsThatAffectFile(){
+  FILE="$1"
+  if [ -z "$FILE" ]; then
+    echo "Usage: listCommitsThatAffectFile <file>"
+    return 1
+  fi
+  # --merges
+  git rev-list --no-merges --pretty=tformat:"%H %as %an %s" HEAD -- "$FILE" | grep -v "^commit"
+}
+
+function fzcommits(){
+  # usage: fzcommits <file> [--checkout]
+  # if --checkout is used, the selected commit will be checked out
+  # whether or not --checkout is used, if exited with Ctrl-C, the file will be restored to the HEAD commit
+  # if --checkout is not used, the selected commit will be displayed (and can be piped to editor of choice)
+  FILE="$1"
+  if [[ -z "$FILE" ]]; then
+    echo "Usage: fzcommits <file> [--checkout]"
+    return 1
+  fi
+  USE_CHECKOUT="0"
+  if [[ "$2" == "--checkout" ]]; then
+    USE_CHECKOUT="1"
+  fi
+
+  # Check if the file has been modified since the last commit
+  if [[ -n $(git diff --name-only HEAD -- "$FILE") ]]; then
+    echo "Error: $FILE has been modified since the most recent commit."
+    echo "Please stash or commit your changes before using this function."
+    return 1
+  fi
+
+  # Save the current HEAD commit hash
+  headCommit=$(git rev-parse HEAD)
+  # Run fzf to select a commit
+  # --preview "(git diff {1}^ -- \"$FILE\" | pygmentize -l diff) && git checkout {1} -- \"$FILE\"" \
+  commitHash=$(listCommitsThatAffectFile "$FILE" | \
+    fzf --wrap --no-mouse \
+        --preview "(git restore --source={1} --worktree -- \"$FILE\") && (git diff {1}^ -- \"$FILE\" | pygmentize -l diff)" \
+        --bind alt-up:preview-up,alt-down:preview-down  | cut -d' ' -f1)
+
+  if [[ -n "$commitHash" ]]; then
+    if [[ "$USE_CHECKOUT" == "1" ]]; then
+      # Check out the selected commit for the file
+      # git checkout "$commitHash" -- "$FILE"
+      git restore --source="$commitHash" --worktree -- "$FILE"
+      echo "Checked out commit: $commitHash for file: $FILE"
+    else
+      # Restore the file to the HEAD commit but display the selected commit's contents
+      # git checkout "$headCommit" -- "$FILE"
+      git restore --source="$headCommit" --worktree -- "$FILE"
+      git show "$commitHash:./$FILE" | pygmentize -g
+    fi
+    return 0
+  else
+    # Restore the file to the HEAD commit on abnormal exit
+    # git checkout "$headCommit" -- "$FILE"
+    git restore --source="$headCommit" --worktree -- "$FILE"
+    echo "Restored $FILE to HEAD commit: $headCommit"
+    return 1
+  fi
+}
