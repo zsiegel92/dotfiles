@@ -1,0 +1,32 @@
+
+select_graphite_pr() {
+    local query="$1"
+    local selected_branch
+    selected_branch=$(gt ls | fzf \
+        --query="$query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --height 90% \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --preview-window=up:3 \
+        --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
+    if [ -n "$selected_branch" ]; then
+        echo "$(echo "$selected_branch" | awk '{print $NF}')"
+    fi
+}
+
+# checkout a branch
+gtls() {
+    # Pass any arguments to select_graphite_pr as the query.
+    local fzf_query="$*"
+    local branch
+    branch=$(select_graphite_pr "$fzf_query")
+    if [ -n "$branch" ]; then
+        echo "git checkout $branch"
+        git checkout "$branch"
+    fi
+}
