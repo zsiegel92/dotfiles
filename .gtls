@@ -1,3 +1,31 @@
+alias gdp='git diff $(gt parent)..HEAD'
+alias gdpn='git diff --name-only $(gt parent)..HEAD'
+
+get_graphite_parent(){
+    local specified_branch="$1"
+    gt info --branch=$specified_branch --stat=true | grep "Parent:" | awk '{print $2}'
+}
+
+select_graphite_pr_and_show_parent_diff_files_in_preview() {
+    local query="$1"
+    local selected_branch
+    selected_branch=$(gt ls | fzf \
+        --query="$query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
+    if [ -n "$selected_branch" ]; then
+        # Strip " (needs restack)" suffix
+        local cleaned="${selected_branch% (needs restack)}"
+        # Get last space-delimited field
+        echo "${cleaned##* }"
+    fi
+}
 
 select_graphite_pr() {
     local query="$1"
@@ -15,7 +43,33 @@ select_graphite_pr() {
         --preview-window=up:3 \
         --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
     if [ -n "$selected_branch" ]; then
-        echo "$(echo "$selected_branch" | awk '{print $NF}')"
+        # Strip " (needs restack)" suffix
+        local cleaned="${selected_branch% (needs restack)}"
+        # Get last space-delimited field
+        echo "${cleaned##* }"
+    fi
+}
+
+select_graphite_pr_on_current_stack_and_show_parent_diff_files_in_preview() {
+    local query="$1"
+    local selected_branch
+    selected_branch=$(gt ls -s | fzf \
+        --query="$query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --height 90% \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --preview-window=up:3 \
+        --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
+    if [ -n "$selected_branch" ]; then
+        # Strip " (needs restack)" suffix
+        local cleaned="${selected_branch% (needs restack)}"
+        # Get last space-delimited field
+        echo "${cleaned##* }"
     fi
 }
 
@@ -24,9 +78,30 @@ gtls() {
     # Pass any arguments to select_graphite_pr as the query.
     local fzf_query="$*"
     local branch
-    branch=$(select_graphite_pr "$fzf_query")
+    branch=$(select_graphite_pr_and_show_parent_diff_files_in_preview "$fzf_query")
     if [ -n "$branch" ]; then
         echo "git checkout $branch"
         git checkout "$branch"
+    fi
+}
+
+gtlss() {
+    # Pass any arguments to select_graphite_pr as the query.
+    local fzf_query="$*"
+    local branch
+    branch=$(select_graphite_pr_on_current_stack_and_show_parent_diff_files_in_preview "$fzf_query")
+    if [ -n "$branch" ]; then
+        echo "git checkout $branch"
+        git checkout "$branch"
+    fi
+}
+
+fzgt(){
+    local query="$*"
+    local branchname
+    branchname=$(select_graphite_pr "$query")
+    if [ -n "$branchname" ]; then
+        echo "gt pr $branchname"
+        gt pr "$branchname"
     fi
 }
