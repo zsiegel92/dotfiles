@@ -1,5 +1,4 @@
-alias gdp='git diff $(gt parent)..HEAD'
-alias gdpn='git diff --name-only $(gt parent)..HEAD'
+alias gdp='git diff --name-only $(gt parent)..HEAD'
 
 get_graphite_parent(){
     local specified_branch="$1"
@@ -103,5 +102,37 @@ fzgt(){
     if [ -n "$branchname" ]; then
         echo "gt pr $branchname"
         gt pr "$branchname"
+    fi
+}
+
+
+
+select_modified_file_in_current_pf() {
+    local query="$1"
+    local selected_filename
+    selected_filename=$(git diff --name-only $(gt parent)..HEAD | fzf \
+        --query="$query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --preview 'git diff --color=always -- {}')
+    if [ -n "$selected_filename" ]; then
+        echo "$selected_filename"
+    fi
+}
+
+# copy a modified file in the current PR
+gdpc() {
+    # Pass any arguments to select_git_branch as the query.
+    local fzf_query="$*"
+    local selected_filename
+    selected_filename=$(select_modified_file_in_current_pf "$fzf_query")
+    if [ -n "$selected_filename" ]; then
+        echo "echo $selected_filename | pbcopy"
+        echo $selected_filename | pbcopy
     fi
 }
