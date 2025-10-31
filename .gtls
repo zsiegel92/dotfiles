@@ -17,6 +17,7 @@ select_graphite_pr_and_show_parent_diff_files_in_preview() {
         --border \
         --wrap \
         --ansi \
+        --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
         # Strip " (needs restack)" suffix
