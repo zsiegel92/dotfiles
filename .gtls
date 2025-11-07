@@ -5,9 +5,15 @@ get_graphite_parent(){
     gt info --branch=$specified_branch --stat=true | grep "Parent:" | awk '{print $2}'
 }
 
-select_graphite_pr_and_show_parent_diff_files_in_preview() {
+
+
+
+# checkout a branch
+gtls() {
     local query="$1"
     local selected_branch
+    local cleaned
+    local more_cleaned
     selected_branch=$(gt ls | fzf \
         --query="$query" \
         --no-mouse \
@@ -20,39 +26,18 @@ select_graphite_pr_and_show_parent_diff_files_in_preview() {
         --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
-        # Strip " (needs restack)" suffix
-        local cleaned="${selected_branch% (needs restack)}"
-        # Get last space-delimited field
-        echo "${cleaned##* }"
+        cleaned="${selected_branch% (needs restack)}"
+        more_cleaned="${cleaned##* }"
+        echo "git checkout $more_cleaned"
+        git checkout "$more_cleaned"
     fi
 }
 
-select_graphite_pr() {
+gtlss() {
     local query="$1"
     local selected_branch
-    selected_branch=$(gt ls | fzf \
-        --query="$query" \
-        --no-mouse \
-        --no-sort  \
-        --tac \
-        --height 90% \
-        --ansi \
-        --border \
-        --wrap \
-        --ansi \
-        --preview-window=up:3 \
-        --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
-    if [ -n "$selected_branch" ]; then
-        # Strip " (needs restack)" suffix
-        local cleaned="${selected_branch% (needs restack)}"
-        # Get last space-delimited field
-        echo "${cleaned##* }"
-    fi
-}
-
-select_graphite_pr_on_current_stack_and_show_parent_diff_files_in_preview() {
-    local query="$1"
-    local selected_branch
+    local cleaned
+    local more_cleaned
     selected_branch=$(gt ls -s | fzf \
         --query="$query" \
         --no-mouse \
@@ -64,43 +49,40 @@ select_graphite_pr_on_current_stack_and_show_parent_diff_files_in_preview() {
         --wrap \
         --ansi \
         --preview-window=up:3 \
+        --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
         # Strip " (needs restack)" suffix
-        local cleaned="${selected_branch% (needs restack)}"
+        cleaned="${selected_branch% (needs restack)}"
+        more_cleaned="${cleaned##* }"
         # Get last space-delimited field
-        echo "${cleaned##* }"
-    fi
-}
-
-# checkout a branch
-gtls() {
-    # Pass any arguments to select_graphite_pr as the query.
-    local fzf_query="$*"
-    local branch
-    branch=$(select_graphite_pr_and_show_parent_diff_files_in_preview "$fzf_query")
-    if [ -n "$branch" ]; then
-        echo "git checkout $branch"
-        git checkout "$branch"
-    fi
-}
-
-gtlss() {
-    # Pass any arguments to select_graphite_pr as the query.
-    local fzf_query="$*"
-    local branch
-    branch=$(select_graphite_pr_on_current_stack_and_show_parent_diff_files_in_preview "$fzf_query")
-    if [ -n "$branch" ]; then
-        echo "git checkout $branch"
-        git checkout "$branch"
+        echo "git checkout $more_cleaned"
+        git checkout "$more_cleaned"
     fi
 }
 
 fzgt(){
-    local query="$*"
-    local branchname
-    branchname=$(select_graphite_pr "$query")
-    if [ -n "$branchname" ]; then
+    local query="$1"
+    local selected_branch
+    local cleaned
+    local more_cleaned
+    selected_branch=$(gt ls | fzf \
+        --query="$query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --height 90% \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --preview-window=up:3 \
+        --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
+        --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
+    if [ -n "$selected_branch" ]; then
+        # Strip " (needs restack)" suffix
+        cleaned="${selected_branch% (needs restack)}"
+        more_cleaned="${cleaned##* }"
         echo "gt pr $branchname"
         gt pr "$branchname"
     fi

@@ -34,3 +34,5 @@ fzd(){
   # copy to clipboard
   git diff $choice
 }
+
+alias gsc=fzs
