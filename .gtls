@@ -1,4 +1,13 @@
-alias gdp='git diff --name-only $(gt parent)..HEAD'
+# alias gdp='git diff --name-only $(gt parent)..HEAD'
+
+gdp(){
+    local queried_file="$1"
+    if [ -n "$queried_file" ]; then
+        git diff $(gt parent)..HEAD -- "$queried_file"
+    else
+        git diff --name-only $(gt parent)..HEAD
+    fi
+}
 
 get_graphite_parent(){
     local specified_branch="$1"
@@ -24,6 +33,7 @@ gtls() {
         --wrap \
         --ansi \
         --preview-window=up:wrap \
+        --bind alt-up:preview-up,alt-down:preview-down \
         --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
@@ -50,6 +60,7 @@ gtlss() {
         --wrap \
         --ansi \
         --preview-window=up:wrap \
+        --bind alt-up:preview-up,alt-down:preview-down \
         --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
@@ -78,6 +89,7 @@ fzgt(){
         --wrap \
         --ansi \
         --preview-window=up:3 \
+        --bind alt-up:preview-up,alt-down:preview-down \
         --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
     if [ -n "$selected_branch" ]; then
@@ -103,7 +115,8 @@ select_modified_file_in_current_pf() {
         --border \
         --wrap \
         --ansi \
-        --preview 'git diff --color=always -- {}')
+        --bind alt-up:preview-up,alt-down:preview-down \
+        --preview 'git diff --color=always $(gt parent)..HEAD -- {}')
     if [ -n "$selected_filename" ]; then
         echo "$selected_filename"
     fi
