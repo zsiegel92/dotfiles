@@ -127,9 +127,13 @@ gdpc() {
     # Pass any arguments to select_git_branch as the query.
     local fzf_query="$*"
     local selected_filename
-    selected_filename=$(select_modified_file_in_current_pf "$fzf_query")
-    if [ -n "$selected_filename" ]; then
-        echo "echo $selected_filename | pbcopy"
-        echo $selected_filename | pbcopy
-    fi
+    while true; do
+        selected_filename=$(select_modified_file_in_current_pf "$fzf_query")
+        if [ -n "$selected_filename" ]; then
+            echo "echo $selected_filename | pbcopy"
+            echo $selected_filename | pbcopy
+        else
+            break
+        fi
+    done
 }
