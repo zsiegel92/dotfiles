@@ -632,6 +632,19 @@
     }
   },
   {
+    "key": "cmd+shift+'",
+    "command": "runCommands",
+    "args": {
+      "commands": [
+        "workbench.action.splitEditorLeft",
+        "workbench.action.focusNextGroup",
+        "workbench.action.focusNextGroup",
+        "workbench.action.closeActiveEditor",
+        "workbench.action.focusPreviousGroup",
+      ]
+    }
+  },
+  {
     "key": "cmd+k shift+cmd+b",
     "command": "workbench.action.toggleAuxiliaryBar"
   },
