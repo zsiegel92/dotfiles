@@ -72,10 +72,8 @@ gtlss() {
         --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
         --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
     if [ -n "$selected_branch" ]; then
-        # Strip " (needs restack)" suffix
-        cleaned="${selected_branch% (needs restack)}"
+        cleaned=$(echo "$selected_branch" | strip_ansi | strip_needs_restack_suffix)
         more_cleaned="${cleaned##* }"
-        # Get last space-delimited field
         echo "git checkout $more_cleaned"
         git checkout "$more_cleaned"
     fi
