@@ -26,7 +26,7 @@ fzs() {
   # copy to clipboard
   if [[ -n $choice ]]; then
     printf %s "$choice" | pbcopy
-    echo "Copied: $choice"
+    echo "$choice"
   fi
 }
 fzd(){
