@@ -108,7 +108,7 @@ fzgt(){
 
 
 
-select_modified_file_in_current_pf() {
+select_modified_file_in_current_pr() {
     local query="$1"
     local selected_filename
     selected_filename=$(git diff --name-only $(gt parent)..HEAD | fzf \
@@ -133,7 +133,7 @@ gdpc() {
     local fzf_query="$*"
     local selected_filename
     while true; do
-        selected_filename=$(select_modified_file_in_current_pf "$fzf_query")
+        selected_filename=$(select_modified_file_in_current_pr "$fzf_query")
         if [ -n "$selected_filename" ]; then
             echo "echo $selected_filename | pbcopy"
             echo $selected_filename | pbcopy
