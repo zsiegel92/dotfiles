@@ -142,3 +142,26 @@ gdpc() {
         fi
     done
 }
+
+
+fzr(){
+    source "$DOTFILES_DIR/.ghi"
+    local prs=$(ghi -r)
+    local VIEW_PR_USING_CACHE_COMMAND='tempfile="/tmp/fzr_pr_{1}.txt"; if [ ! -f "$tempfile" ]; then (GH_FORCE_TTY=$FZF_PREVIEW_COLUMNS gh pr view {1} > "$tempfile" 2>&1) & fi; count=0; while [ ! -f "$tempfile" ] && [ $count -lt 50 ]; do sleep 0.1; count=$((count + 1)); done; if [ -f "$tempfile" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain "$tempfile"; else cat "$tempfile"; fi; else echo "Loading PR #{1}..."; fi'
+    local selected=$(echo $prs | \
+        fzf --ansi \
+            --preview "$VIEW_PR_USING_CACHE_COMMAND" \
+            --preview-window='right:60%:wrap' \
+            --no-mouse \
+            --delimiter=' ' \
+            --with-nth=2.. \
+            --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
+    )
+    if [ -z "$selected" ]; then
+        echo "No PR selected"
+        return 1
+    fi
+    local pr_number=$(echo "$selected" | awk '{print $1}')
+    echo "gt pr $pr_number"
+    gt pr "$pr_number"
+}
