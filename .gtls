@@ -186,6 +186,9 @@ fzrc(){
         return 1
     fi
     local branch=$(echo "$selected" | awk '{print $NF}')
-    echo "gt pr $branch"
-    gt get "$branch"
+    # echo "gt pr $branch"
+    # gt get "$branch"
+    local pr_number=$(echo "$selected" | awk '{print $1}')
+    echo "gt pr $pr_number"
+    gt pr "$pr_number"
 }
