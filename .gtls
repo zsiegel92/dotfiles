@@ -170,7 +170,7 @@ fzr(){
 
 fzrc(){
     source "$DOTFILES_DIR/.ghi"
-    local prs=$(ghi -r)
+    local prs=$(ghi)
     local VIEW_PR_USING_CACHE_COMMAND='tempfile="/tmp/fzr_pr_{1}.txt"; if [ ! -f "$tempfile" ]; then (GH_FORCE_TTY=$FZF_PREVIEW_COLUMNS gh pr view {1} > "$tempfile" 2>&1) & fi; count=0; while [ ! -f "$tempfile" ] && [ $count -lt 50 ]; do sleep 0.1; count=$((count + 1)); done; if [ -f "$tempfile" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain "$tempfile"; else cat "$tempfile"; fi; else echo "Loading PR #{1}..."; fi'
     local selected=$(echo $prs | \
         fzf --ansi \
