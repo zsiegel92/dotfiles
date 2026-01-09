@@ -143,6 +143,32 @@ gdpc() {
     done
 }
 
+# diff a modified file in the current PR (parent vs HEAD) using VS Code
+gdpd() {
+    local fzf_query="$*"
+    local selected_filename
+    local base_ref
+    base_ref=$(gt parent)
+    
+    while true; do
+        selected_filename=$(select_modified_file_in_current_pr "$fzf_query")
+        if [ -n "$selected_filename" ]; then
+            local basename=$(basename "$selected_filename")
+            local LEFT="/tmp/__parent__${basename}"
+            
+            cleanup() { rm -f "$LEFT"; }
+            trap cleanup EXIT
+            
+            git show "${base_ref}:${selected_filename}" >"$LEFT" 2>/dev/null || :
+            
+            echo "code --diff (parent) (HEAD) -- $selected_filename"
+            code --diff "$LEFT" "$selected_filename"
+        else
+            break
+        fi
+    done
+}
+
 
 fzr(){
     source "$DOTFILES_DIR/.ghi"
