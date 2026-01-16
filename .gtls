@@ -225,3 +225,8 @@ gdpcode(){
     local changed_files=$(git diff --name-only $(gt parent)..HEAD)
     code $(echo $changed_files)
 }
+
+gscode(){
+    local changed_files=$(git diff --name-only)
+    code $(echo $changed_files)
+}
