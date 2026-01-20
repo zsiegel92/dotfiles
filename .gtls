@@ -230,3 +230,22 @@ gscode(){
     local changed_files=$(git diff --name-only)
     code $(echo $changed_files)
 }
+
+
+diffcode(){
+    local selected_filename="$1"
+    local base_ref
+    base_ref=$(gt parent)
+    if [ -n "$selected_filename" ]; then
+        local basenamed=$(basename "$selected_filename")
+        local LEFT="/tmp/__parent__${basenamed}"
+        cleanup() { rm -f "$LEFT"; }
+        trap cleanup EXIT
+        git show "${base_ref}:${selected_filename}" >"$LEFT" 2>/dev/null || :
+        code --diff "$LEFT" "$selected_filename"
+    else
+        break
+    fi
+}
+
+alias dcode=diffcode
