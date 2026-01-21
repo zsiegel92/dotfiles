@@ -22,12 +22,20 @@ fzdirtyselect(){
 }
 # copy a filepath from git status
 fzs() {
-  choice=$(fzdirtyselect "$1")
   # copy to clipboard
-  if [[ -n $choice ]]; then
-    printf %s "$choice" | pbcopy
-    echo "$choice"
-  fi
+  while true; do
+    choice=$(fzdirtyselect "$1")
+    local ret=$?
+    if [[ $ret -eq 1 ]]; then
+      echo "No modified or untracked files."
+      return 1
+    elif [[ -n $choice ]]; then
+      printf %s "$choice" | pbcopy
+      echo "$choice"
+    else
+      break
+    fi
+  done
 }
 fzd(){
   choice=$(fzdirtyselect "$1")
