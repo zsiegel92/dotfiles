@@ -558,6 +558,12 @@
     "when": "editorTextFocus || workbench.view.search.active"
   },
   {
+    "key": "cmd+alt+r",
+    "command": "workbench.action.quickOpen",
+    "args": ":",
+    "when": "editorTextFocus || workbench.view.search.active"
+  },
+  {
     "key": "cmd+shift+r",
     "command": "workbench.action.gotoSymbol",
     "when": "editorTextFocus || workbench.view.search.active"
@@ -621,13 +627,16 @@
     "key": "cmd+shift+\\",
     "command": "runCommands",
     "args": {
+      // "commands": [
+      //   "workbench.action.splitEditor",
+      //   "workbench.action.focusPreviousGroup",
+      //   "workbench.action.closeActiveEditor",
+      //   "workbench.action.focusNextGroup",
+      // ]
       "commands": [
-        "workbench.action.splitEditor",
+        "workbench.action.newGroupRight",
         "workbench.action.focusPreviousGroup",
-        "workbench.action.focusPreviousGroup",
-        "workbench.action.closeActiveEditor",
-        "workbench.action.focusNextGroup",
-        // "workbench.action.focusLeftGroup",
+        "workbench.action.moveEditorToRightGroup",
       ]
     }
   },
@@ -867,12 +876,12 @@
     "command": "-actions.findWithSelection"
   },
   {
-    "key": "cmd+e",
+    "key": "alt+cmd+e",
     "command": "editor.action.smartSelect.expand",
     "when": "editorTextFocus"
   },
   {
-    "key": "shift+cmd+e",
+    "key": "shift+alt+cmd+e",
     "command": "editor.action.smartSelect.shrink",
     "when": "editorTextFocus"
   },
@@ -1017,7 +1026,7 @@
     "when": "accessibilityHelpIsShown"
   },
   {
-    "key": "ctrl+shift+e",
+    "key": "shift+cmd+e",
     "command": "workbench.view.explorer",
     "when": "viewContainer.workbench.view.explorer.enabled"
   },
@@ -1063,11 +1072,21 @@
     "args": "CUSTOM TASK: open in Excel"
   },
   {
-    "key": "cmd+k shift+cmd+g",
-    "command": "workbench.files.action.compareWithClipboard"
-  },
-  {
     "key": "cmd+k cmd+p",
     "command": "pr.openDiffViewFromEditor"
+  },
+  {
+    "key": "cmd+e",
+    "command": "-cursor.toggleAgentWindowIDEUnification",
+    "when": "cursor.agentIdeUnification.featureGate && workbenchState != 'empty'"
+  },
+  {
+    "key": "cmd+k shift+cmd+g",
+    "command": "prStatus:github.focus"
+  },
+  {
+    "key": "shift+cmd+x",
+    "command": "-mdx.toggleDelete",
+    "when": "editorTextFocus && !editorReadonly && editorLangId == 'mdx'"
   }
 ]
