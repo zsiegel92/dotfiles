@@ -110,8 +110,10 @@ fzgt(){
 
 select_modified_file_in_current_pr() {
     local query="$1"
+    local parent
+    parent=$(gt parent)
     local selected_filename
-    selected_filename=$(git diff --name-only $(gt parent)..HEAD | fzf \
+    selected_filename=$(git diff --name-only "$parent"..HEAD | fzf \
         --query="$query" \
         --no-mouse \
         --no-sort  \
@@ -121,7 +123,7 @@ select_modified_file_in_current_pr() {
         --wrap \
         --ansi \
         --bind alt-up:preview-up,alt-down:preview-down \
-        --preview 'git diff --color=always $(gt parent)..HEAD -- {}')
+        --preview "git diff --color=always ${parent}..HEAD -- {}")
     if [ -n "$selected_filename" ]; then
         echo "$selected_filename"
     fi
