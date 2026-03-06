@@ -32,8 +32,8 @@ gdnc() {
     while true; do
         selected_filename=$(select_modified_file_in_current_branch "$fzf_query")
         if [ -n "$selected_filename" ]; then
-            echo "echo $selected_filename | pbcopy"
-            echo $selected_filename | pbcopy
+            echo "printf '%s' \"$selected_filename\" | pbcopy"
+            printf '%s' "$selected_filename" | pbcopy
         else
             break
         fi

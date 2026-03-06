@@ -51,7 +51,7 @@ gbc() {
     local branch
     branch=$(select_git_branch "$fzf_query")
     if [ -n "$branch" ]; then
-        echo "echo $branch | pbcopy"
-        echo $branch | pbcopy
+        echo "printf '%s' \"$branch\" | pbcopy"
+        printf '%s' "$branch" | pbcopy
     fi
 }
