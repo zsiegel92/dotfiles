@@ -228,9 +228,34 @@ gdpcode(){
     code $(echo $changed_files)
 }
 
-gscode(){
+gscode_all(){
     local changed_files=$(git diff --name-only)
     code $(echo $changed_files)
+}
+
+gscode() {
+    # Pass any arguments to select_git_branch as the query.
+    local fzf_query="$*"
+    local selected_filename
+    local changed_files=$(git diff --name-only)
+    while true; do
+        selected_filename=$(echo $changed_files | fzf \
+        --query="$fzf_query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --bind alt-up:preview-up,alt-down:preview-down \
+        --preview "git diff --color=always -- {}")
+        if [ -n "$selected_filename" ]; then
+            code $selected_filename
+        else
+            break
+        fi
+    done
 }
 
 
