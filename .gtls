@@ -228,6 +228,8 @@ gdpcode(){
     code $(echo $changed_files)
 }
 
+alias gs='git status -s'
+
 gscode_all(){
     local changed_files=$(git diff --name-only)
     code $(echo $changed_files)
