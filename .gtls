@@ -223,9 +223,34 @@ fzrc(){
     done
 }
 
-gdpcode(){
+gdpcode_all(){
     local changed_files=$(git diff --name-only $(gt parent)..HEAD)
     code $(echo $changed_files)
+}
+
+gdpcode(){
+    # Pass any arguments to select_git_branch as the query.
+    local fzf_query="$*"
+    local selected_filename
+    local changed_files=$(git diff --name-only $(gt parent)..HEAD)
+    while true; do
+        selected_filename=$(echo $changed_files | fzf \
+        --query="$fzf_query" \
+        --no-mouse \
+        --no-sort  \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --ansi \
+        --bind alt-up:preview-up,alt-down:preview-down \
+        --preview "git diff --color=always -- {}")
+        if [ -n "$selected_filename" ]; then
+            code $selected_filename
+        else
+            break
+        fi
+    done
 }
 
 alias gs='git status -s'
