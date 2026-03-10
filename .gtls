@@ -255,18 +255,28 @@ gdpcode(){
 
 alias gs='git status -s'
 
+gscode_changed_files() {
+    {
+        git diff --name-only
+        git ls-files --others --exclude-standard
+    } | sed '/^$/d'
+}
+
 gscode_all(){
-    local changed_files=$(git diff --name-only)
-    code $(echo $changed_files)
+    local changed_files
+    changed_files=$(gscode_changed_files)
+    [ -n "$changed_files" ] || return
+    code ${(f)changed_files}
 }
 
 gscode() {
     # Pass any arguments to select_git_branch as the query.
     local fzf_query="$*"
     local selected_filename
-    local changed_files=$(git diff --name-only)
+    local changed_files
+    changed_files=$(gscode_changed_files)
     while true; do
-        selected_filename=$(echo $changed_files | fzf \
+        selected_filename=$(printf '%s\n' "$changed_files" | fzf \
         --query="$fzf_query" \
         --no-mouse \
         --no-sort  \
@@ -276,9 +286,9 @@ gscode() {
         --wrap \
         --ansi \
         --bind alt-up:preview-up,alt-down:preview-down \
-        --preview "git diff --color=always -- {}")
+        --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
         if [ -n "$selected_filename" ]; then
-            code $selected_filename
+            code "$selected_filename"
         else
             break
         fi
