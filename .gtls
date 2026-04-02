@@ -224,17 +224,22 @@ fzrc(){
 }
 
 gdpcode_all(){
-    local changed_files=$(git diff --name-only $(gt parent)..HEAD)
-    code $(echo $changed_files)
+    local changed_files
+    changed_files=$(git diff --name-only "$(gt parent)"..HEAD)
+    [ -n "$changed_files" ] || return
+    code ${(f)changed_files}
 }
 
 gdpcode(){
     # Pass any arguments to select_git_branch as the query.
     local fzf_query="$*"
     local selected_filename
-    local changed_files=$(git diff --name-only $(gt parent)..HEAD)
+    local base_ref
+    local changed_files
+    base_ref=$(gt parent)
+    changed_files=$(git diff --name-only "$base_ref"..HEAD)
     while true; do
-        selected_filename=$(echo $changed_files | fzf \
+        selected_filename=$(printf '%s\n' "$changed_files" | fzf \
         --query="$fzf_query" \
         --no-mouse \
         --no-sort  \
@@ -244,9 +249,9 @@ gdpcode(){
         --wrap \
         --ansi \
         --bind alt-up:preview-up,alt-down:preview-down \
-        --preview "git diff --color=always -- {}")
+        --preview "git diff --color=always ${base_ref}..HEAD -- {}")
         if [ -n "$selected_filename" ]; then
-            code $selected_filename
+            code "$selected_filename"
         else
             break
         fi
