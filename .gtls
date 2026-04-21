@@ -108,10 +108,9 @@ fzgt(){
 
 
 
-select_modified_file_in_current_pr() {
-    local query="$1"
-    local parent
-    parent=$(gt parent)
+select_modified_file_in_specified_branch() {
+    local parent="$1"
+    local query="$2"
     local selected_filename
     selected_filename=$(git diff --name-only "$parent"..HEAD | fzf \
         --query="$query" \
@@ -124,6 +123,17 @@ select_modified_file_in_current_pr() {
         --ansi \
         --bind alt-up:preview-up,alt-down:preview-down \
         --preview "git diff --color=always ${parent}..HEAD -- {}")
+    if [ -n "$selected_filename" ]; then
+        echo "$selected_filename"
+    fi
+}
+
+select_modified_file_in_current_pr() {
+    local query="$1"
+    local parent
+    parent=$(gt parent)
+    local selected_filename
+    selected_filename=$(select_modified_file_in_specified_branch "$parent" "$query")
     if [ -n "$selected_filename" ]; then
         echo "$selected_filename"
     fi
@@ -171,6 +181,31 @@ gdpd() {
     done
 }
 
+gdpb() {
+    local fzf_query="$*"
+    local selected_filename
+    local base_ref
+    # $1, default to `main`
+    base_ref=${1:-main}
+    
+    while true; do
+        selected_filename=$(select_modified_file_in_specified_branch "$base_ref" "$fzf_query")
+        if [ -n "$selected_filename" ]; then
+            local basename=$(basename "$selected_filename")
+            local LEFT="/tmp/__parent__${basename}"
+            
+            cleanup() { rm -f "$LEFT"; }
+            trap cleanup EXIT
+            
+            git show "${base_ref}:${selected_filename}" >"$LEFT" 2>/dev/null || :
+            
+            echo "code --diff (parent) (HEAD) -- $selected_filename"
+            code --diff "$LEFT" "$selected_filename"
+        else
+            break
+        fi
+    done
+}
 
 fzr(){
     source "$DOTFILES_DIR/.ghi"
