@@ -182,11 +182,11 @@ gdpd() {
 }
 
 gdpb() {
-    local fzf_query="$*"
     local selected_filename
     local base_ref
-    # $1, default to `main`
     base_ref=${1:-main}
+    shift 2>/dev/null || true
+    local fzf_query="$*"
     
     while true; do
         selected_filename=$(select_modified_file_in_specified_branch "$base_ref" "$fzf_query")
