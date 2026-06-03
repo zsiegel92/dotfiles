@@ -55,3 +55,15 @@ gbc() {
         printf '%s' "$branch" | pbcopy
     fi
 }
+
+# copy current branch name
+cgb() {
+    local branch
+    branch=$(git branch --show-current) || return
+    if [ -z "$branch" ]; then
+        echo "No current branch" >&2
+        return 1
+    fi
+    echo "printf '%s' \"$branch\" | pbcopy"
+    printf '%s' "$branch" | pbcopy
+}
