@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# flm (fuzzy list modified): fuzzy-select a file (newest-modified first) under a
+# directory and open it in VS Code.
+# Usage: flm [dir=.]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+selected=$("$HELPERS/fzrecent" "${1:-.}")
+[ -n "$selected" ] && code "$selected"

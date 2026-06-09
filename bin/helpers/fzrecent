@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fuzzy-select a file under a directory, listed newest-modified first.
+# Each row shows the modified date (Myyyy-MM-dd) next to the path (with the
+# search directory's prefix stripped for readability). The full path is printed
+# on selection. Preview shows the file contents.
+# Usage: fzrecent [dir=.]
+dir="${1:-.}"
+
+# Per file emit: epoch<TAB>Myyyy-MM-dd<TAB>fullpath. Sort newest-first, drop the
+# epoch sort key, then add a display column with the "<dir>/" prefix stripped:
+#   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
+# fzf shows the date + display name, but returns (and previews) the full path.
+find "$dir" -type f -print0 \
+  | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
+  | sort -rn \
+  | cut -f2- \
+  | awk -F'\t' -v pfx="${dir%/}/" 'BEGIN{OFS="\t"} { disp=$2; sub("^" pfx, "", disp); print $1, disp, $2 }' \
+  | fzf \
+      --no-sort \
+      --no-mouse \
+      --height 90% \
+      --ansi \
+      --delimiter='\t' \
+      --tabstop=1 \
+      --with-nth=1,2 \
+      --accept-nth=3 \
+      --preview-window=right:60% \
+      --bind alt-up:preview-up,alt-down:preview-down \
+      --preview 'if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {3}; else cat -- {3}; fi'
