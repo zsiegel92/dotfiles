@@ -10,7 +10,7 @@ dir="${1:-.}"
 # epoch sort key, then add a display column with the "<dir>/" prefix stripped:
 #   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
 # fzf shows the date + display name, but returns (and previews) the full path.
-find "$dir" -type f -print0 \
+find -H "$dir" -type f -print0 \
   | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
   | sort -rn \
   | cut -f2- \
