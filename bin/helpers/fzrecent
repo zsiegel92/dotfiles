@@ -26,4 +26,4 @@ find "$dir" -type f -print0 \
       --accept-nth=3 \
       --preview-window=right:60% \
       --bind alt-up:preview-up,alt-down:preview-down \
-      --preview 'if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {3}; else cat -- {3}; fi'
+      --preview 'if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain --wrap=character ${FZF_PREVIEW_COLUMNS:+--terminal-width="$FZF_PREVIEW_COLUMNS"} -- {3}; else cat -- {3}; fi'
