@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-select dirty files and copy each path to the clipboard.
+# Usage: fzs [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+while true; do
+    choice=$("$HELPERS/fzdirtyselect" "$1")
+    ret=$?
+    if [ "$ret" -eq 1 ]; then
+        echo "No modified or untracked files."
+        exit 1
+    elif [ -n "$choice" ]; then
+        printf %s "$choice" | pbcopy
+        echo "$choice"
+    else
+        break
+    fi
+done

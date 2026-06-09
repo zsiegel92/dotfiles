@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+# Open all files changed in the current PR (graphite parent..HEAD) in VS Code.
+changed_files=$(git diff --name-only "$(gt parent)"..HEAD)
+[ -n "$changed_files" ] || return
+code ${(f)changed_files}

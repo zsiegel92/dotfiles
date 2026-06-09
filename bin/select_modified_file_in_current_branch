@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fuzzy-select a file changed on the current branch vs main; prints the path.
+# Usage: select_modified_file_in_current_branch [query]
+query="$1"
+selected_filename=$(git diff --name-only main..HEAD | fzf \
+    --query="$query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --preview 'git diff --color=always main..HEAD -- {}')
+if [ -n "$selected_filename" ]; then
+    echo "$selected_filename"
+fi

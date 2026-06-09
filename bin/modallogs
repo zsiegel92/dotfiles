@@ -1,0 +1,65 @@
+#!/usr/bin/env zsh
+# Fuzzy-pick a running Modal app across all environments and tail its logs.
+# Usage: modallogs [fzf-query]
+FZFQUERY="$@"
+command -v fzf >/dev/null 2>&1 || { echo "fzf not found. Install using: brew install fzf (macOS) or sudo apt-get install fzf (Linux)"; return 1; }
+uv run --with modal modal --help >/dev/null 2>&1 || { echo "'uv run --with modal modal' not found. Install it (may have to install globally, outside virtual env) using: uv pip install --system modal"; return 1; }
+setopt NO_BG_NICE
+setopt NO_NOTIFY
+print_header() {
+    printf "%-30s %-30s %-15s %-30s %-30s\n" "Environment" "Description" "State" "App ID" "Created at"
+    printf "%-30s %-30s %-15s %-30s %-30s\n" "-----------" "-----------" "-----" "------" "------"
+  }
+print_header
+listAllApps() {
+  print_app_details() {
+    local env="$1"
+    local description="$2"
+    local state="$3"
+    local app_id="$4"
+    local created_at="$5"
+    printf "%-30s %-30s %-15s %-30s %-30s\n" "$env" "$description" "$state" "$app_id" "$created_at"
+  }
+  environments=($(uv run --with modal modal environment list --json | jq -r '.[].name'))
+  if [[ ${#environments[@]} -eq 0 ]]; then
+    echo "Error: Failed to fetch environments"
+    return 1
+  fi
+  for env in "${environments[@]}"; do
+    (
+      apps=$(uv run --with modal modal app list --env "$env" --json | jq '[.[] | select(.State != "stopped")]' 2>&1)
+      echo "$apps" | jq -r --arg env "$env" '.[] | "\($env) \(.Description // "No description") \(.State) \(.["App ID"]) \(.["Created at"])"' | while IFS= read -r line; do
+        eval set -- "$line"
+        print_app_details "$1" "$2" "$3" "$4" "$5"
+      done
+    ) &
+  done
+  wait
+}
+showLogs() {
+  local env=$(echo "$1" | awk '{print $1}')
+  local appName=$(echo "$1" | awk '{print $2}')
+  local appState=$(echo "$1" | awk '{print $3}')
+  local appId=$(echo "$1" | awk '{print $4}')
+  local createdAt=$(echo "$1" | awk '{print $5}')
+  echo "View full logs at https://modal.com/logs/current-ai-llc/$env/$appId"
+  echo "Tailing logs for $env $appName ($appState, created $createdAt)"
+  echo "uv run --with modal modal app logs --env \"$env\" \"$appId\""
+  uv run --with modal modal app logs --env "$env" "$appId"
+}
+# --preview-window=down:10
+# `--bind one:accept` vs `--select-1`: the first will start the finder UI and accept one whenever that is achieved; --select-1 will only start the finder UI if there is more than one after waiting for some results to populate
+selectedApp=$(listAllApps | fzf --bind 'one:accept' --query="$FZFQUERY" --layout=reverse --height 90% --no-mouse --no-sort --tac --ansi --border \
+  --preview 'showLogsInlined() {
+    local env=$(echo "$1" | awk "{gsub(/^[ \x27]+|[ \x27]+$/, \"\", \$1); print \$1}")
+    local appName=$(echo "$1" | awk "{print \$2}")
+    local appState=$(echo "$1" | awk "{print \$3}")
+    local appId=$(echo "$1" | awk "{print \$4}")
+    local createdAt=$(echo "$1" | awk "{print \$5}")
+    echo "View full logs at https://modal.com/logs/current-ai-llc/$env/$appId"
+    echo "Press enter to tail logs for $env $appName ($appState, created $createdAt) - showing head in preview"
+    echo "uv run --with modal modal app logs --env \"$env\" \"$appId\""
+    uv run --with modal modal app logs --env "$env" "$appId"
+  }; showLogsInlined "{}"')
+echo "Tailing logs for $selectedApp"
+showLogs "$selectedApp"

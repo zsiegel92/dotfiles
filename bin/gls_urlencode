@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# URL-encode the given argument.
+# Usage: gls_urlencode <value>
+jq -rn --arg value "$1" '$value | @uri'

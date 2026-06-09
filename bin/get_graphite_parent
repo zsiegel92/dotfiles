@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Print the graphite parent branch of the given branch.
+# Usage: get_graphite_parent <branch>
+specified_branch="$1"
+gt info --branch="$specified_branch" --stat=true | grep "Parent:" | awk '{print $2}'

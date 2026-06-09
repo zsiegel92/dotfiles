@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Show your manual-eval-run.yml workflow runs from the last 24h as JSON.
+username=$(gh api user --jq '.login')
+gh run list --workflow=manual-eval-run.yml \
+  --user "$username" \
+  --json status,conclusion,headBranch,createdAt,url \
+  | jq '
+    map(select((now - (.createdAt | fromdateiso8601)) <= (24*60*60)))
+    | sort_by(.createdAt)
+    | map(del(.createdAt))
+  '

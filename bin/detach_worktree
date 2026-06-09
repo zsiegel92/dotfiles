@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Fuzzy-select a git worktree and detach its HEAD.
+echo 'git worktree list --porcelain'
+worktree=$(git worktree list --porcelain | awk '/^worktree /{print $2}' | \
+    fzf --preview 'dir={}; git worktree list --porcelain | grep -A2 "^worktree $dir$"')
+if [ -z "$worktree" ]; then
+    echo "No worktree selected"
+    exit 1
+fi
+git -C "$worktree" checkout --detach

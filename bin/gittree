@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Show a tree of git-tracked files (respects .gitignore via git ls-tree).
+git ls-tree -r --name-only HEAD | tree --fromfile

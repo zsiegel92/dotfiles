@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Trigger a GitLab CI pipeline on the current branch with an eval_script variable.
+# Usage: manualGitlabPipeline <eval_script>
+eval_script="$1"
+if [ -z "$eval_script" ]; then
+  echo "Usage: manualGitlabPipeline <eval_script>"
+  exit 1
+fi
+
+branch=$(git branch --show-current) || exit
+glab ci run --branch "$branch" --variables "eval_script:$eval_script"

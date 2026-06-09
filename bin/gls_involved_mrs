@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Fetch MRs (in <state>) where <username> is author, assignee, or reviewer.
+# Output is a deduped JSON array sorted by most recently updated.
+# Usage: gls_involved_mrs <state> <username>
+state="$1"
+username="$2"
+encoded_username=$(gls_urlencode "$username") || exit
+
+{
+  gls_api_mrs "state=$state&author_username=$encoded_username"
+  gls_api_mrs "state=$state&assignee_username=$encoded_username"
+  gls_api_mrs "state=$state&reviewer_username=$encoded_username"
+} | jq -s 'add // [] | unique_by(.id) | sort_by(.updated_at) | reverse'

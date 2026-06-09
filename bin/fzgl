@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-pick a GitLab MR (from `gli`) and open it in the browser.
+# Accepts the same flags as gli (e.g. -r, --all, --done).
+gls_require_command fzf || exit
+mrs=$(gli "$@") || exit
+
+GLS_VIEW_MR_USING_CACHE_COMMAND='tempfile="/tmp/fzgl_mr_{1}.txt"; printf "%s\n\n" {-1}; if [ ! -f "$tempfile" ]; then (COLUMNS=$FZF_PREVIEW_COLUMNS glab mr view {1} > "$tempfile" 2>&1) & fi; count=0; while [ ! -f "$tempfile" ] && [ $count -lt 50 ]; do sleep 0.1; count=$((count + 1)); done; if [ -f "$tempfile" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain "$tempfile"; else cat "$tempfile"; fi; else echo "Loading MR !{1}..."; fi'
+
+while true; do
+  mr_iid=$(printf '%s\n' "$mrs" | \
+    fzf --ansi \
+      --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND" \
+      --preview-window='right:60%:wrap' \
+      --no-mouse \
+      --delimiter=' ' \
+      --with-nth=2.. \
+      --accept-nth=1 \
+      --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+  if [ -z "$mr_iid" ]; then
+    echo "No MR selected"
+    exit 1
+  fi
+
+  (glab mr view "$mr_iid" --web >/dev/null 2>&1 &)
+done

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Format a JSON array of GitLab MRs (from stdin) into one colored line each.
+exec jq -r '
+  def red: "[31m" + . + "[0m";
+  def gray: "[90m" + . + "[0m";
+  def magenta: "[35m" + . + "[0m";
+  def merge_state:
+    (.detailed_merge_status // .merge_status // "") as $status
+    | if ($status == "" or $status == "can_be_merged" or $status == "checking" or $status == "unchecked") then
+        ""
+      else
+        " " + ($status | ascii_upcase | red)
+      end;
+  def draft_state:
+    if (.draft // false) then " " + ("DRAFT" | gray) else "" end;
+  def mr_state:
+    if .state == "merged" then
+      " " + ("MERGED" | magenta)
+    elif .state != "opened" then
+      " " + (.state | ascii_upcase)
+    else
+      ""
+    end;
+  def reviewer_names:
+    (.reviewers // [] | map(.username // .name) | join(","));
+
+  .[] |
+  "\(.iid) \(.iid)\(merge_state)\(draft_state)\(mr_state) (\(.author.username // "unknown") -> \(if reviewer_names == "" then "no reviewers" else reviewer_names end)): \(.title) - \(.updated_at) \(.source_branch)"
+'

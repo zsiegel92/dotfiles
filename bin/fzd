@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Fuzzy-select a dirty file and show its git diff.
+# Usage: fzd [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+choice=$("$HELPERS/fzdirtyselect" "$1")
+git diff $choice

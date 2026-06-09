@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for detach_worktree.
+exec detach_worktree "$@"

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Copy the current branch name to the clipboard.
+branch=$(git branch --show-current) || exit
+if [ -z "$branch" ]; then
+    echo "No current branch" >&2
+    exit 1
+fi
+echo "printf '%s' \"$branch\" | pbcopy"
+printf '%s' "$branch" | pbcopy

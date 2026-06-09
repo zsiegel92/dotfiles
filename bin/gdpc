@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-select files changed in the current PR and copy each to the clipboard.
+# Usage: gdpc [query]
+fzf_query="$*"
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+while true; do
+    selected_filename=$("$HELPERS/select_modified_file_in_current_pr" "$fzf_query")
+    if [ -n "$selected_filename" ]; then
+        echo "printf '%s' \"$selected_filename\" | pbcopy"
+        printf '%s' "$selected_filename" | pbcopy
+    else
+        break
+    fi
+done

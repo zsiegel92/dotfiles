@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Show your GitLab pipelines from the last 24h (current project) as JSON.
+gls_require_command glab || exit
+gls_require_command jq || exit
+
+username=$(gls_gitlab_username) || exit
+encoded_username=$(gls_urlencode "$username") || exit
+
+glab api --paginate "projects/:fullpath/pipelines?per_page=100&order_by=updated_at&sort=desc&username=$encoded_username" \
+  | jq '
+    def parse_gitlab_date: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+    map(select((now - (.created_at | parse_gitlab_date)) <= (24*60*60)))
+    | sort_by(.created_at)
+    | map({
+        status,
+        ref,
+        source,
+        created_at,
+        updated_at,
+        web_url,
+        name
+      })
+  '

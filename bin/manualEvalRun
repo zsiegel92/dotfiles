@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Trigger the "Manual Evaluation Run" GitHub workflow on the current branch.
+# Usage: manualEvalRun <eval_script>
+eval="$1"
+if [ -z "$eval" ]; then
+  echo "Usage: manualEvalRun <eval_script>"
+  exit 1
+fi
+branch=$(git branch --show-current)
+gh workflow run 'Manual Evaluation Run' -f eval_script="$eval" --ref "$branch"

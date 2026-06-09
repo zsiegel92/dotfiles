@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Open a man page in VS Code (plain text).
+man "$@" | col -b | code -

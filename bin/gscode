@@ -1,0 +1,24 @@
+#!/usr/bin/env zsh
+# Repeatedly fuzzy-select modified/untracked files and open each in VS Code.
+# Usage: gscode [query]
+fzf_query="$*"
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+changed_files=$("$HELPERS/gscode_changed_files")
+while true; do
+    selected_filename=$(printf '%s\n' "$changed_files" | fzf \
+    --query="$fzf_query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
+    if [ -n "$selected_filename" ]; then
+        code "$selected_filename"
+    else
+        break
+    fi
+done

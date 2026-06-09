@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Strip ANSI color escape codes from stdin.
+exec sed 's/\x1b\[[0-9;]*m//g'

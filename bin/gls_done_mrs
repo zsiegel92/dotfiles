@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fetch closed+merged MRs involving <username> as a deduped JSON array.
+# Usage: gls_done_mrs <username>
+username="$1"
+{
+  gls_involved_mrs closed "$username"
+  gls_involved_mrs merged "$username"
+} | jq -s 'add // [] | unique_by(.id) | sort_by(.updated_at) | reverse'

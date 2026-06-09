@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Watch `gli` output, refreshing every 5s.
+exec watch --color -n 5 gli

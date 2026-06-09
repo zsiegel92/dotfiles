@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fuzzy-select a branch and copy its name to the clipboard.
+# Usage: gbc [query]
+branch=$(select_git_branch "$*")
+if [ -n "$branch" ]; then
+    echo "printf '%s' \"$branch\" | pbcopy"
+    printf '%s' "$branch" | pbcopy
+fi

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fuzzy-select a branch and merge it into the current branch.
+# Usage: gbm [query]
+branch=$(select_git_branch "$*")
+if [ -n "$branch" ]; then
+    echo "git merge $branch"
+    git merge "$branch"
+fi

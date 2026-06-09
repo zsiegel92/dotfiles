@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
+# Usage: select_git_branch [query]
+query="$1"
+selected_branch=$(git branch | fzf \
+    --query="$query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --height 90% \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --preview-window=up:3 \
+    --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" $(echo {} | sed "s/^[* ]*//")')
+if [ -n "$selected_branch" ]; then
+    echo "$(echo "$selected_branch" | sed 's/^[* ]*//')"
+fi

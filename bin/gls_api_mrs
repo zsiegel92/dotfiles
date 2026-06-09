@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fetch merge requests for the current project via the GitLab API.
+# Usage: gls_api_mrs <query-string>
+query="$1"
+glab api --paginate "projects/:fullpath/merge_requests?per_page=100&order_by=updated_at&sort=desc&$query"

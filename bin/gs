@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Short git status.
+exec git status -s "$@"

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Print the GitHub PR URL referenced in a commit's message (the "(#1234)" suffix).
+# Usage: getPrUrlFromCommitHash <commit-hash>
+if [ -z "$1" ]; then
+    echo "Usage: getPrUrlFromCommitHash <commit-hash>"
+    exit 1
+fi
+
+commit_hash="$1"
+remote_url=$(git remote get-url origin)
+
+# Extract owner/repo from remote URL
+repo_path=$(echo "$remote_url" | sed -E 's/.*[:|\/]([^\/]+\/[^\/]+)\.git$/\1/')
+
+# Get commit message and look for PR number
+commit_msg=$(git show --format="%s" -s "$commit_hash" 2>/dev/null)
+
+if [ $? -ne 0 ]; then
+    echo "Error: Commit hash not found"
+    exit 1
+fi
+
+# Extract PR number from commit message (format: "... (#1234)")
+pr_number=$(echo "$commit_msg" | grep -oE '\(#[0-9]+\)' | grep -oE '[0-9]+')
+
+if [ -z "$pr_number" ]; then
+    echo "No PR number found in commit message: $commit_msg"
+    exit 1
+fi
+
+echo "https://github.com/$repo_path/pull/$pr_number"

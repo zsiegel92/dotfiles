@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Continuously display your recent manual eval runs, refreshing every 3s.
+while true; do
+  tput civis  # hide cursor for less flicker
+  printf "\033[H"  # move cursor to top instead of full clear
+  printf "Manual Eval Runs\n"
+  showManualEvalRuns
+  sleep 3
+done

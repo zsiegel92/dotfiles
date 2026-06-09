@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Watch git status (untracked included), refreshing every 1s.
+exec watch --color -n 1 git -c color.status=always --no-optional-locks status -u

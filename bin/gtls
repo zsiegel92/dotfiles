@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fuzzy-select a graphite branch (gt ls) and check it out.
+# alt-enter opens its PR; preview shows files changed vs its parent.
+# Usage: gtls [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+query="$1"
+selected_branch=$(gt ls | fzf \
+    --query="$query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --preview-window=up:wrap \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
+    --preview 'cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; parent=$(gt info --branch=$branch --stat=true | grep "Parent:" | awk "{print \$2}"); git diff --name-only $parent..$branch')
+if [ -n "$selected_branch" ]; then
+    cleaned=$(echo "$selected_branch" | strip_ansi | "$HELPERS/strip_needs_restack_suffix")
+    more_cleaned="${cleaned##* }"
+    echo "git checkout $more_cleaned"
+    git checkout "$more_cleaned"
+fi

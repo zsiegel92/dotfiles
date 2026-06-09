@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Open the given file(s) in Microsoft Excel.
+exec open -a "Microsoft Excel" "$@"

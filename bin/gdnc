@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-select files changed vs main and copy each path to the clipboard.
+# Usage: gdnc [query]
+fzf_query="$*"
+while true; do
+    selected_filename=$(select_modified_file_in_current_branch "$fzf_query")
+    if [ -n "$selected_filename" ]; then
+        echo "printf '%s' \"$selected_filename\" | pbcopy"
+        printf '%s' "$selected_filename" | pbcopy
+    else
+        break
+    fi
+done

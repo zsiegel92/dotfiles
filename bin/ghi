@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# List GitHub PRs involving you.
+#   ghi          open PRs involving you (default)
+#   ghi --all|-a all open PRs
+#   ghi -r       PRs requesting your review (not yet approved)
+#   ghi -d|--done closed PRs involving you
+state="open"
+search_query="involves:@me"
+
+case "$1" in
+  --all|-a)
+    state="open"
+    ;;
+  -r)
+    state="open"
+    search_query="review-requested:@me -review:approved"
+    ;;
+  -d|--done)
+    state="closed"
+    ;;
+  *)
+    # default: open PRs involving you
+    ;;
+esac
+json_fields='number,title,author,updatedAt,reviewDecision,isDraft,state,mergeable,mergeStateStatus,headRefName,latestReviews'
+template='{{- range . }}{{- $reviewStatus := .reviewDecision -}}{{- if not $reviewStatus -}}{{- range .latestReviews -}}{{- if eq .state "CHANGES_REQUESTED" -}}{{- $reviewStatus = "CHANGES_REQUESTED" -}}{{- end -}}{{- end -}}{{- end -}}{{- if not $reviewStatus -}}{{- range .latestReviews -}}{{- if eq .state "APPROVED" -}}{{- $reviewStatus = "APPROVED" -}}{{- end -}}{{- end -}}{{- end -}}{{ .number }} {{ .number }}{{ if and (ne .mergeable "MERGEABLE") (ne .mergeable "UNKNOWN") }} {{ color "red" .mergeable }}{{ end }}{{ if and (ne .mergeStateStatus "CLEAN") (ne .mergeStateStatus "UNKNOWN") }} {{ color "red" .mergeStateStatus }}{{ end }}{{ if .isDraft }} {{ color "gray" "DRAFT" }}{{ end }}{{ if eq .state "MERGED" }} {{ color "magenta" .state }}{{ else if ne .state "OPEN" }} {{ .state }}{{ end }} ({{- if eq $reviewStatus "APPROVED" }}{{ color "green" $reviewStatus }}  {{- else if eq $reviewStatus "CHANGES_REQUESTED" }}{{ color "red" $reviewStatus }}  {{- else }}{{ color "yellow" $reviewStatus }}  {{- end }} {{ .author.login }}): {{ .title }} — {{ .updatedAt }} {{ .headRefName }} {{- "\n" }}{{- end }}'
+GH_FORCE_TTY=1 gh pr list \
+      --state "$state" \
+      --search "$search_query" \
+      --json "$json_fields" \
+      --template "$template"

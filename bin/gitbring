@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Restore the working tree from a branch (bring a branch's contents into the
+# working directory without switching branches).
+# Usage: gitbring <branch-name>
+if [[ $# -ne 1 ]]; then
+    echo "Usage: gitbring <branch-name>" >&2
+    exit 1
+fi
+git restore --source "$1" --worktree .

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-select files changed vs a base branch (default main) and open
+# each as a VS Code diff (base version vs working tree).
+# Usage: gdpb [base_ref=main] [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+base_ref=${1:-main}
+shift 2>/dev/null || true
+fzf_query="$*"
+
+while true; do
+    selected_filename=$("$HELPERS/select_modified_file_in_specified_branch" "$base_ref" "$fzf_query")
+    if [ -n "$selected_filename" ]; then
+        basename=$(basename "$selected_filename")
+        LEFT="/tmp/__parent__${basename}"
+
+        cleanup() { rm -f "$LEFT"; }
+        trap cleanup EXIT
+
+        git show "${base_ref}:${selected_filename}" >"$LEFT" 2>/dev/null || :
+
+        echo "code --diff (parent) (HEAD) -- $selected_filename"
+        code --diff "$LEFT" "$selected_filename"
+    else
+        break
+    fi
+done

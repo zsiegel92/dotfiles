@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Print your GitLab username (via glab).
+gls_require_command glab || exit
+gls_require_command jq || exit
+glab api user | jq -r '.username'

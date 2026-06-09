@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Watch the git diff, refreshing every 1s.
+exec watch --color -n 1 git -c color.diff=always --no-pager diff

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Tail logs for a Modal ephemeral app.
+# Usage:
+#   modal_ephemeral_logs [env] [appName]
+#     env      environment (default: main)
+#     appName  ephemeral app description (default: first ephemeral app found)
+env="${1:-main}"
+appName="$2"
+
+# Fetch the list of apps in the given environment
+apps_json=$(python -m modal app list --env "$env" --json)
+
+# If appName is not provided, select the first ephemeral app
+if [ -z "$appName" ]; then
+  appInfo=$(echo "$apps_json" | jq -r '.[] | select(.State == "ephemeral") | {description: .Description, id: ."App ID"} | select(.id != null) | . | @json' | head -n 1)
+  if [ -z "$appInfo" ]; then
+    echo "No ephemeral apps found."
+    exit 1
+  fi
+  appName=$(echo "$appInfo" | jq -r '.description')
+  appId=$(echo "$appInfo" | jq -r '.id')
+  echo "No appName provided, defaulting to first ephemeral app: $appName"
+else
+  appId=$(echo "$apps_json" | jq -r ".[] | select(.State == \"ephemeral\" and .Description == \"$appName\") | .\"App ID\"")
+  if [ -z "$appId" ]; then
+    echo "No ephemeral app found with description '$appName'."
+    exit 1
+  fi
+fi
+
+# Fetch and display logs for the selected app
+python -m modal app logs --env "$env" "$appId"

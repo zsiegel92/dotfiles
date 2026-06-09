@@ -1,9 +1,0 @@
-multicode() {
- xargs -I {} zsh -ic 'code {}'
-}
-
-alias excel='open -a "Microsoft Excel"'
-
-mancode(){
-  man $@ | col -b | code -
-}

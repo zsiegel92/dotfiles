@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Open a VS Code diff of one file: graphite parent version vs working tree.
+# Usage: diffcode <file>
+selected_filename="$1"
+base_ref=$(gt parent)
+if [ -n "$selected_filename" ]; then
+    basenamed=$(basename "$selected_filename")
+    LEFT="/tmp/__parent__${basenamed}"
+    cleanup() { rm -f "$LEFT"; }
+    trap cleanup EXIT
+    git show "${base_ref}:${selected_filename}" >"$LEFT" 2>/dev/null || :
+    code --diff "$LEFT" "$selected_filename"
+fi

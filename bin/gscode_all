@@ -1,0 +1,6 @@
+#!/usr/bin/env zsh
+# Open all modified/untracked files in VS Code.
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+changed_files=$("$HELPERS/gscode_changed_files")
+[ -n "$changed_files" ] || return
+code ${(f)changed_files}

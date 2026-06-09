@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Browse the commits that touched a file; preview each version of the file.
+#   fzcommits <file>             show selected version (file restored to HEAD on exit)
+#   fzcommits <file> --checkout  restore the file to the selected commit's version
+# In all cases, Ctrl-C restores the file to HEAD.
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+FILE="$1"
+if [[ -z "$FILE" ]]; then
+  echo "Usage: fzcommits <file> [--checkout]"
+  exit 1
+fi
+USE_CHECKOUT="0"
+if [[ "$2" == "--checkout" ]]; then
+  USE_CHECKOUT="1"
+fi
+
+# Check if the file has been modified since the last commit
+if [[ -n $(git diff --name-only HEAD -- "$FILE") ]]; then
+  echo "Error: $FILE has been modified since the most recent commit."
+  echo "Please stash or commit your changes before using this function."
+  exit 1
+fi
+
+# Save the current HEAD commit hash
+headCommit=$(git rev-parse HEAD)
+commitHash=$("$HELPERS/listCommitsThatAffectFile" "$FILE" | \
+  fzf --wrap --no-mouse \
+      --preview "(git restore --source={1} --worktree -- \"$FILE\") && (git diff {1}^ -- \"$FILE\" | pygmentize -l diff)" \
+      --bind alt-up:preview-up,alt-down:preview-down  | cut -d' ' -f1)
+
+if [[ -n "$commitHash" ]]; then
+  if [[ "$USE_CHECKOUT" == "1" ]]; then
+    git restore --source="$commitHash" --worktree -- "$FILE"
+    echo "Checked out commit: $commitHash for file: $FILE"
+  else
+    git restore --source="$headCommit" --worktree -- "$FILE"
+    git show "$commitHash:./$FILE" | pygmentize -g
+  fi
+  exit 0
+else
+  git restore --source="$headCommit" --worktree -- "$FILE"
+  echo "Restored $FILE to HEAD commit: $headCommit"
+  exit 1
+fi

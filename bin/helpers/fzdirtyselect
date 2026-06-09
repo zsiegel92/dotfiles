@@ -1,0 +1,24 @@
+#!/usr/bin/env zsh
+# Fuzzy-select among modified + untracked files; prints the selection(s).
+# Preview shows the diff for tracked files, syntax-highlighted contents otherwise.
+# Usage: fzdirtyselect [query]
+query="$1"
+local IFS=$'\n'
+local -a files=($(git diff --name-only) $(git ls-files --others --exclude-standard))
+(( ${#files} == 0 )) && { echo "No modified or untracked files."; return 1 }
+local choice
+choice=$(printf '%s\n' "${files[@]}" | fzf \
+    --query="$query" \
+    --no-sort --tac \
+    --height 90% --ansi \
+    --preview-window=up:60% \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --preview='
+      # untracked? show whole file; otherwise show diff
+      if git ls-files --others --exclude-standard --error-unmatch {} >/dev/null 2>&1; then
+        pygmentize -g {}
+      else
+        git diff --color=always -- {}
+      fi'
+    )
+echo "$choice"

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Continuously display your recent GitLab pipelines, refreshing every 3s.
+while true; do
+  tput civis
+  printf "\033[H"
+  printf "Manual GitLab Pipelines\n"
+  showManualGitlabPipelines
+  sleep 3
+done

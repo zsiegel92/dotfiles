@@ -1,17 +1,15 @@
+# Add this repo's command directories to PATH so all the standalone commands are
+# available. Source this from ~/.zshrc:
+#   source ~/code/dotfiles/source_all
+#
+# bin/         the actual commands (where the work happens)
+# bin/aliases/ thin wrappers that just delegate to a command in bin/
+#
+# Run `dotfiles-help` to list every available command.
 DOTFILES_DIR="${0:a:h}"
-source "$DOTFILES_DIR/.ghi"
-source "$DOTFILES_DIR/.fzp"
-source "$DOTFILES_DIR/.gbs"
-source "$DOTFILES_DIR/.gtls"
-source "$DOTFILES_DIR/.get_pr_url_from_commit_hash"
-source "$DOTFILES_DIR/.ide_commands"
-source "$DOTFILES_DIR/.gittree"
-source "$DOTFILES_DIR/.fzs"
-source "$DOTFILES_DIR/.modallogs"
-source "$DOTFILES_DIR/.fzcommits"
-source "$DOTFILES_DIR/.ws"
-source "$DOTFILES_DIR/.show_manual_evaluation_runs"
-source "$DOTFILES_DIR/git-worktree-stuff"
-source "$DOTFILES_DIR/.gdn"
-source "$DOTFILES_DIR/.gls"
-source "$DOTFILES_DIR/gitbring"
+for dir in "$DOTFILES_DIR/bin" "$DOTFILES_DIR/bin/aliases"; do
+  case ":$PATH:" in
+    *":$dir:"*) ;;
+    *) export PATH="$dir:$PATH" ;;
+  esac
+done

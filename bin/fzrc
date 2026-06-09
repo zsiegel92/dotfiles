@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Repeatedly fuzzy-pick from PRs involving you and check each out with `gt pr`.
+# Preview is cached and refreshed if older than 5 minutes.
+prs=$(ghi)
+VIEW_PR_USING_CACHE_COMMAND='tempfile="/tmp/fzr_pr_{1}.txt"; if [ -f "$tempfile" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain "$tempfile"; else cat "$tempfile"; fi; if [ -n "$(find "$tempfile" -mmin +5 2>/dev/null)" ]; then (GH_FORCE_TTY=$FZF_PREVIEW_COLUMNS gh pr view {1} > "$tempfile" 2>&1) & fi; else (GH_FORCE_TTY=$FZF_PREVIEW_COLUMNS gh pr view {1} > "$tempfile" 2>&1) & count=0; while [ ! -f "$tempfile" ] && [ $count -lt 50 ]; do sleep 0.1; count=$((count + 1)); done; if [ -f "$tempfile" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain "$tempfile"; else cat "$tempfile"; fi; else echo "Loading PR #{1}..."; fi; fi'
+while true; do
+    selected=$(echo "$prs" | \
+        fzf --ansi \
+            --preview "$VIEW_PR_USING_CACHE_COMMAND" \
+            --preview-window='right:60%:wrap' \
+            --no-mouse \
+            --delimiter=' ' \
+            --with-nth=2.. \
+            --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+    if [ -z "$selected" ]; then
+        echo "No PR selected"
+        exit 1
+    fi
+    pr_number=$(echo "$selected" | awk '{print $1}')
+    echo "gt pr $pr_number"
+    gt pr "$pr_number"
+done

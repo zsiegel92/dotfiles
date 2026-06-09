@@ -1,0 +1,24 @@
+#!/usr/bin/env zsh
+# Repeatedly fuzzy-select files changed in the current PR and open each in VS Code.
+# Usage: gdpcode [query]
+fzf_query="$*"
+base_ref=$(gt parent)
+changed_files=$(git diff --name-only "$base_ref"..HEAD)
+while true; do
+    selected_filename=$(printf '%s\n' "$changed_files" | fzf \
+    --query="$fzf_query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --preview "git diff --color=always ${base_ref}..HEAD -- {}")
+    if [ -n "$selected_filename" ]; then
+        code "$selected_filename"
+    else
+        break
+    fi
+done

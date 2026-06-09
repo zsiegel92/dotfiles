@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Print modified (tracked) and untracked files, one per line, blank lines removed.
+{
+    git diff --name-only
+    git ls-files --others --exclude-standard
+} | sed '/^$/d'

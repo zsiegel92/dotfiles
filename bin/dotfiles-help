@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# List all custom dotfiles commands with their descriptions.
+# Each command's description is the first comment line below its shebang.
+# Commands live in bin/; thin alias wrappers live in bin/aliases/.
+# Usage:
+#   dotfiles-help            list every command
+#   dotfiles-help <pattern>  list commands whose name matches <pattern>
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+ALIAS_DIR="$BIN_DIR/aliases"
+pattern="$1"
+
+matches() {
+  name=$1
+  [ "$name" = "dotfiles-help" ] && return 1
+  [ -n "$pattern" ] && case "$name" in *"$pattern"*) ;; *) return 1 ;; esac
+  return 0
+}
+
+# Determine column width for alignment across both directories.
+max=0
+for f in "$BIN_DIR"/* "$ALIAS_DIR"/*; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f")
+  matches "$name" || continue
+  [ ${#name} -gt $max ] && max=${#name}
+done
+
+# First comment line after the shebang = the description.
+describe() {
+  awk 'NR==1 && /^#!/ {next} /^#/ {sub(/^# ?/,""); print; exit} {exit}' "$1"
+}
+
+list_dir() {
+  for f in "$1"/*; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    matches "$name" || continue
+    printf '%-*s  %s\n' "$max" "$name" "$(describe "$f")"
+  done
+}
+
+echo "COMMANDS"
+list_dir "$BIN_DIR"
+echo
+echo "ALIASES"
+list_dir "$ALIAS_DIR"

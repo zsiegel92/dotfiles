@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fuzzy-select a file changed in the current PR (graphite parent..HEAD).
+# Usage: select_modified_file_in_current_pr [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)"
+query="$1"
+parent=$(gt parent)
+"$HELPERS/select_modified_file_in_specified_branch" "$parent" "$query"

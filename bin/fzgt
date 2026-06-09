@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Fuzzy-select a graphite branch (gt ls) and open its PR (gt pr).
+# alt-enter also opens the PR; preview shows the branch's commit log.
+# Usage: fzgt [query]
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+query="$1"
+selected_branch=$(gt ls | fzf \
+    --query="$query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --height 90% \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --preview-window=up:3 \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --bind 'alt-enter:execute(cleaned=$(echo {} | sed "s/ (needs restack)$//"); branch="${cleaned##* }"; gt pr $branch)' \
+    --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {-1}')
+if [ -n "$selected_branch" ]; then
+    cleaned=$(echo "$selected_branch" | strip_ansi | "$HELPERS/strip_needs_restack_suffix")
+    more_cleaned="${cleaned##* }"
+    echo "gt pr $more_cleaned"
+    gt pr "$more_cleaned"
+fi

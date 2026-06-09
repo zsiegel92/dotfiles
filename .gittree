@@ -1,6 +1,0 @@
-treeIgnore(){
-  git ls-tree -r --name-only HEAD | tree --fromfile
-}
-alias gittree=treeIgnore
-
-alias gitfind='git ls-tree -r --name-only HEAD'

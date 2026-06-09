@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Show files changed in the current PR (graphite parent..HEAD), or diff one file.
+# Usage: gdp [file]
+queried_file="$1"
+if [ -n "$queried_file" ]; then
+    git diff "$(gt parent)"..HEAD -- "$queried_file"
+else
+    git diff --name-only "$(gt parent)"..HEAD
+fi

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# List commits (hash, date, author, subject) that touched a file.
+# Usage: listCommitsThatAffectFile <file>
+FILE="$1"
+if [ -z "$FILE" ]; then
+  echo "Usage: listCommitsThatAffectFile <file>"
+  exit 1
+fi
+git rev-list --no-merges --pretty=tformat:"%H %as %an %s" HEAD -- "$FILE" | grep -v "^commit"

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# List all git-tracked files (one per line).
+exec git ls-tree -r --name-only HEAD

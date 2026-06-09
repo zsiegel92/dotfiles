@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Exit non-zero (with a message) if the named command is not on PATH.
+# Usage: gls_require_command <command>
+command -v "$1" >/dev/null 2>&1 || {
+  echo "$1 not found"
+  exit 1
+}

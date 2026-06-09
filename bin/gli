@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# List GitLab merge requests (GitHub `ghi` analogue).
+#   gli            open MRs involving you (default)
+#   gli --all|-a   all open MRs in the project
+#   gli -r         open MRs requesting your review
+#   gli -d|--done  closed/merged MRs involving you
+case "$1" in
+  -h|--help)
+    echo "Usage: gli [--all|-a|-r|--done|-d]"
+    echo "  default: open merge requests involving you"
+    echo "  --all:   all open merge requests in the current GitLab project"
+    echo "  -r:      open merge requests requesting your review"
+    echo "  --done:  closed or merged merge requests involving you"
+    exit
+    ;;
+esac
+
+gls_require_command glab || exit
+gls_require_command jq || exit
+
+case "$1" in
+  --all|-a)
+    gls_api_mrs "state=opened" | gls_format_mrs
+    ;;
+  -r)
+    username=$(gls_gitlab_username) || exit
+    encoded_username=$(gls_urlencode "$username") || exit
+    gls_api_mrs "state=opened&reviewer_username=$encoded_username" | gls_format_mrs
+    ;;
+  -d|--done)
+    username=$(gls_gitlab_username) || exit
+    gls_done_mrs "$username" | gls_format_mrs
+    ;;
+  *)
+    username=$(gls_gitlab_username) || exit
+    gls_involved_mrs opened "$username" | gls_format_mrs
+    ;;
+esac

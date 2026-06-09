@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Strip a trailing " (needs restack)" suffix from each line of stdin.
+exec sed 's/ (needs restack)$//'

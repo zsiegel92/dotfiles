@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fuzzy-select a file changed between <parent>..HEAD; prints the chosen path.
+# Usage: select_modified_file_in_specified_branch <parent> [query]
+parent="$1"
+query="$2"
+selected_filename=$(git diff --name-only "$parent"..HEAD | fzf \
+    --query="$query" \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --preview "git diff --color=always ${parent}..HEAD -- {}")
+if [ -n "$selected_filename" ]; then
+    echo "$selected_filename"
+fi

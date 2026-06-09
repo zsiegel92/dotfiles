@@ -1,0 +1,84 @@
+#!/usr/bin/env zsh
+# Interactively stage/unstage files with fzf. Pre-selects already-staged files;
+# applying the selection stages the chosen files and unstages the rest.
+# Usage: gsadd [query]
+fzf_query="$*"
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+local staged_output changed_output fzf_input selected_output fzf_status file
+local has_staged=0
+local -a staged_files changed_files all_files selected_files files_to_add files_to_reset
+local -A staged_map selected_map seen_files
+
+staged_output=$(git diff --cached --name-only)
+changed_output=$("$HELPERS/gscode_changed_files")
+staged_files=("${(@f)staged_output}")
+changed_files=("${(@f)changed_output}")
+staged_files=("${(@)staged_files:#}")
+changed_files=("${(@)changed_files:#}")
+[ "${#staged_files[@]}" -gt 0 ] && has_staged=1
+
+for file in "${staged_files[@]}"; do
+    staged_map[$file]=1
+done
+
+for file in "${staged_files[@]}" "${changed_files[@]}"; do
+    [ -n "$file" ] || continue
+    if [ -z "${seen_files[$file]}" ]; then
+        all_files+=("$file")
+        seen_files[$file]=1
+    fi
+done
+
+[ "${#all_files[@]}" -gt 0 ] || return
+
+fzf_input=$(
+    for file in "${all_files[@]}"; do
+        if [ -n "${staged_map[$file]}" ]; then
+            printf 'staged\t%s\n' "$file"
+        else
+            printf 'unstaged\t%s\n' "$file"
+        fi
+    done
+)
+
+selected_output=$(printf '%s\n' "$fzf_input" | GSADD_HAS_STAGED="$has_staged" FZF_GSADD_QUERY="$fzf_query" fzf \
+    --query='^staged' \
+    --no-mouse \
+    --no-sort  \
+    --tac \
+    --ansi \
+    --border \
+    --wrap \
+    --ansi \
+    --multi \
+    --sync \
+    --delimiter '\t' \
+    --header 'tab: toggle, ctrl-a: select all, alt-enter/enter: apply, ctrl-c: cancel' \
+    --bind 'start:select-all+transform-query:printf %s "$FZF_GSADD_QUERY"' \
+    --bind alt-up:preview-up,alt-down:preview-down \
+    --bind "ctrl-a:select-all,enter,alt-enter:become(sh -c 'if [ \"\$FZF_SELECT_COUNT\" -gt 0 ] || [ \"\$GSADD_HAS_STAGED\" != 1 ]; then cut -f2- \"\$1\"; fi' sh {+f})" \
+    --preview 'file_path={2..}; gsadd_state={1}; if git ls-files --error-unmatch -- "$file_path" >/dev/null 2>&1; then if [ "$gsadd_state" = staged ]; then git diff --color=always --cached -- "$file_path"; git diff --color=always -- "$file_path"; else git diff --color=always -- "$file_path"; fi; elif [ -f "$file_path" ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- "$file_path"; else cat -- "$file_path"; fi; fi')
+fzf_status=$?
+[ "$fzf_status" -eq 0 ] || return "$fzf_status"
+
+selected_files=("${(@f)selected_output}")
+selected_files=("${(@)selected_files:#}")
+
+for file in "${selected_files[@]}"; do
+    selected_map[$file]=1
+    files_to_add+=("$file")
+done
+
+for file in "${staged_files[@]}"; do
+    if [ -z "${selected_map[$file]}" ]; then
+        files_to_reset+=("$file")
+    fi
+done
+
+if [ "${#files_to_reset[@]}" -gt 0 ]; then
+    git reset -- "${files_to_reset[@]}" || return
+fi
+
+if [ "${#files_to_add[@]}" -gt 0 ]; then
+    git add -- "${files_to_add[@]}"
+fi
