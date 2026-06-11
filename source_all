@@ -13,3 +13,18 @@ for dir in "$DOTFILES_DIR/bin" "$DOTFILES_DIR/bin/aliases"; do
     *) export PATH="$dir:$PATH" ;;
   esac
 done
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+  completion_dir="$DOTFILES_DIR/zsh/completions"
+  case " ${fpath[*]} " in
+    *" $completion_dir "*) ;;
+    *) fpath=("$completion_dir" $fpath) ;;
+  esac
+
+  if whence -w compdef >/dev/null 2>&1; then
+    autoload -Uz _bring _gbs
+    compdef _bring bring gitbring
+    compdef _gbs gbs
+  fi
+  unset completion_dir
+fi
