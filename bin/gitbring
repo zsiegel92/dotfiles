@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
-# Restore the working tree from a branch (bring a branch's contents into the
-# working directory without switching branches).
+# Restore the working tree from a branch without switching branches.
 # Usage: gitbring <branch-name>
+set -euo pipefail
+
 if [[ $# -ne 1 ]]; then
     echo "Usage: gitbring <branch-name>" >&2
     exit 1
 fi
-git restore --source "$1" --worktree .
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "gitbring: not inside a git worktree" >&2
+    exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+
+if ! git diff --quiet --exit-code || ! git diff --cached --quiet --exit-code || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    echo "gitbring: current branch has local changes; refusing to bring over them" >&2
+    echo "gitbring: run unbring, commit, or stash before bringing another branch" >&2
+    git status --short >&2
+    exit 1
+fi
+
+git restore --source "$1" --worktree -- :/
