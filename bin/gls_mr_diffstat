@@ -49,6 +49,6 @@ awk '
     if (files == 1) {
       suffix = ""
     }
-    printf "Diff: %d file%s, +%d/-%d\n", files, suffix, additions, deletions
+    printf "%d file%s, +%d/-%d\n", files, suffix, additions, deletions
   }
 ' "$tmpfile"

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Render the fzf preview for a GitLab MR.
+mr_iid="$1"
+title="$2"
+branch_names="$3"
+actor_names="$4"
+
+if [ -z "$mr_iid" ]; then
+  echo "Usage: gls_fzf_preview_mr <mr-iid> <title> <source->target> <author->reviewers>" >&2
+  exit 2
+fi
+
+viewfile="/tmp/fzgl_mr_v3_${mr_iid}.txt"
+statfile="/tmp/fzgl_mr_diffstat_v3_${mr_iid}.txt"
+branch_label=${branch_names/->/ -> }
+
+printf '%s\n' "$title"
+printf '%s\n' "$branch_label"
+printf '%s\n' "$actor_names"
+
+if [ -s "$statfile" ]; then
+  cat "$statfile"
+  if [ -n "$(find "$statfile" -mmin +5 2>/dev/null)" ]; then
+    (gls_mr_diffstat "$mr_iid" > "$statfile" 2>&1) &
+  fi
+else
+  if gls_mr_diffstat "$mr_iid" > "$statfile" 2>&1; then
+    cat "$statfile"
+  else
+    echo "Loading stats for MR !${mr_iid}..."
+  fi
+fi
+
+printf '\n'
+
+if [ -f "$viewfile" ]; then
+  if command -v bat >/dev/null 2>&1; then
+    bat --color=always --style=plain "$viewfile"
+  else
+    cat "$viewfile"
+  fi
+
+  if [ -n "$(find "$viewfile" -mmin +5 2>/dev/null)" ]; then
+    (COLUMNS=$FZF_PREVIEW_COLUMNS gls_preview_mr "$mr_iid" > "$viewfile" 2>&1) &
+  fi
+else
+  (COLUMNS=$FZF_PREVIEW_COLUMNS gls_preview_mr "$mr_iid" > "$viewfile" 2>&1) &
+  count=0
+  while [ ! -f "$viewfile" ] && [ $count -lt 50 ]; do
+    sleep 0.1
+    count=$((count + 1))
+  done
+
+  if [ -f "$viewfile" ]; then
+    if command -v bat >/dev/null 2>&1; then
+      bat --color=always --style=plain "$viewfile"
+    else
+      cat "$viewfile"
+    fi
+  else
+    echo "Loading MR !${mr_iid}..."
+  fi
+fi

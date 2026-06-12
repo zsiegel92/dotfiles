@@ -21,8 +21,12 @@ exec jq -r '
     else
       ""
     end;
+  def clean:
+    tostring | gsub("[\t\r\n]"; " ");
   def author_name:
     .author.username // "unknown";
+  def title_text:
+    .title // "" | clean;
   def reviewer_names:
     (.reviewers // [] | map(.username // .name) | join(","));
   def reviewer_label:
@@ -35,14 +39,14 @@ exec jq -r '
     env.GLS_CURRENT_USER == "" or author_name != env.GLS_CURRENT_USER;
   def visible_line:
     if show_actor_in_list then
-      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names) (\(actor_names)): \(.title) - \(.updated_at)"
+      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names) (\(actor_names)): \(title_text) - \(.updated_at)"
     else
-      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names): \(.title) - \(.updated_at)"
+      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names): \(title_text) - \(.updated_at)"
     end;
 
   .[] |
   if env.GLS_FZF_FORMAT == "1" then
-    "\(.iid)\t\(visible_line)\t\(branch_names)\t\(actor_names)"
+    "\(.iid)\t\(visible_line)\t\(branch_names)\t\(actor_names)\t\(title_text)"
   else
     visible_line
   end
