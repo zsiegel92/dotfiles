@@ -21,9 +21,29 @@ exec jq -r '
     else
       ""
     end;
+  def author_name:
+    .author.username // "unknown";
   def reviewer_names:
     (.reviewers // [] | map(.username // .name) | join(","));
+  def reviewer_label:
+    if reviewer_names == "" then "no-reviewers" else reviewer_names end;
+  def actor_names:
+    "\(author_name)->\(reviewer_label)";
+  def branch_names:
+    "\(.source_branch // "unknown")->\(.target_branch // "unknown")";
+  def show_actor_in_list:
+    env.GLS_CURRENT_USER == "" or author_name != env.GLS_CURRENT_USER;
+  def visible_line:
+    if show_actor_in_list then
+      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names) (\(actor_names)): \(.title) - \(.updated_at)"
+    else
+      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names): \(.title) - \(.updated_at)"
+    end;
 
   .[] |
-  "\(.iid) \(.iid)\(merge_state)\(draft_state)\(mr_state) (\(.author.username // "unknown") -> \(if reviewer_names == "" then "no reviewers" else reviewer_names end)): \(.title) - \(.updated_at) \(.source_branch)"
+  if env.GLS_FZF_FORMAT == "1" then
+    "\(.iid)\t\(visible_line)\t\(branch_names)\t\(actor_names)"
+  else
+    visible_line
+  end
 '

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Print a compact diffstat for a GitLab MR.
+mr_iid="$1"
+
+if [ -z "$mr_iid" ]; then
+  echo "Usage: gls_mr_diffstat <mr-iid>" >&2
+  exit 2
+fi
+
+gls_require_command glab || exit
+
+tmpfile=$(mktemp "${TMPDIR:-/tmp}/gls_mr_diffstat.XXXXXX") || exit
+trap 'rm -f "$tmpfile"' EXIT
+
+glab mr diff "$mr_iid" --raw --color=never > "$tmpfile" || exit
+
+awk '
+  BEGIN {
+    files = 0
+    additions = 0
+    deletions = 0
+  }
+
+  /^diff --git / {
+    files++
+    next
+  }
+
+  /^\+\+\+ / {
+    next
+  }
+
+  /^--- / {
+    next
+  }
+
+  /^\+/ {
+    additions++
+    next
+  }
+
+  /^-/ {
+    deletions++
+    next
+  }
+
+  END {
+    suffix = "s"
+    if (files == 1) {
+      suffix = ""
+    }
+    printf "Diff: %d file%s, +%d/-%d\n", files, suffix, additions, deletions
+  }
+' "$tmpfile"

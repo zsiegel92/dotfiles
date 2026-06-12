@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Preview a GitLab MR with a compact diffstat header.
+mr_iid="$1"
+
+if [ -z "$mr_iid" ]; then
+  echo "Usage: gls_preview_mr <mr-iid>" >&2
+  exit 2
+fi
+
+gls_require_command glab || exit
+
+if diffstat=$(gls_mr_diffstat "$mr_iid" 2>/dev/null); then
+  printf '%s\n\n' "$diffstat"
+fi
+
+glab mr view "$mr_iid"

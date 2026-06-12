@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# GitLab fuZzy Mr viewer: repeatedly pick MRs from `gli` and open them in the browser.
+exec fzgl "$@"
