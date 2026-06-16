@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fuzzy-select GitLab MRs and copy their source branch names to the clipboard.
+# Accepts the same flags as gli (e.g. -r, --all, --done).
+gls_require_command fzf || exit
+gls_require_command pbcopy || exit
+
+current_user=$(gls_gitlab_username 2>/dev/null || true)
+mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "$@") || exit
+
+GLS_VIEW_MR_USING_CACHE_COMMAND='gls_fzf_preview_mr {1} {5} {3} {4}'
+
+selected=$(printf '%s\n' "$mrs" | \
+  fzf --ansi \
+    --multi \
+    --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND" \
+    --preview-window='right:60%:wrap' \
+    --no-mouse \
+    --delimiter=$'\t' \
+    --with-nth=2 \
+    --header='tab: toggle, ctrl-a: select all, enter: copy branches, ctrl-c: cancel' \
+    --bind="ctrl-a:select-all,alt-enter:accept,alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+fzf_status=$?
+
+if [ "$fzf_status" -ne 0 ]; then
+  exit "$fzf_status"
+fi
+
+if [ -z "$selected" ]; then
+  echo "No MRs selected"
+  exit 1
+fi
+
+branch_names=$(printf '%s\n' "$selected" | awk -F $'\t' '
+  NF >= 3 {
+    branch = $3
+    sub(/->.*/, "", branch)
+    if (branch != "") {
+      print branch
+    }
+  }
+')
+
+if [ -z "$branch_names" ]; then
+  echo "No branch names selected"
+  exit 1
+fi
+
+printf '%s' "$branch_names" | pbcopy
+printf '%s\n' "$branch_names"
