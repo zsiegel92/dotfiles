@@ -1,0 +1,80 @@
+" IDE-like vimrc for gscode3 two-column diff editor.
+" Left window: read-only HEAD version. Right window: working tree (editable).
+
+set nocompatible
+set mouse=a
+set number
+set ruler
+set laststatus=2
+set scrollbind
+set cursorline
+set hlsearch
+syntax on
+
+" Arrow keys, PageUp/PageDown, Home/End all work natively in both modes.
+" Make insert mode behave more like a regular editor:
+"   - Backspace works across line boundaries
+"   - Shift+arrows select text (visual mode)
+set backspace=indent,eol,start
+set selectmode=mouse,key
+set keymodel=startsel,stopsel
+set selection=inclusive
+
+" Sync vim's yank/paste with the macOS system clipboard so that:
+"   - Selecting text with Shift+arrows + pressing y (or just deleting it)
+"     puts the text on the system clipboard automatically.
+"   - Cmd-V in any other app pastes vim's yanked content.
+" Requires vim built with +clipboard (stock macOS Homebrew vim has it).
+if has('clipboard')
+    set clipboard=unnamed,unnamedplus
+endif
+
+" macOS clipboard workflow:
+"   COPY  → select with Shift+arrows, press `y`. With clipboard=unnamed above,
+"           it lands on the system clipboard. Then Cmd-V works in any app.
+"   PASTE → in insert mode, just press Cmd-V — the terminal sends the
+"           clipboard text directly as keystrokes. (Vim's `p` also works in
+"           normal mode and pulls from the system clipboard.)
+
+" Lock the left (HEAD) buffer as read-only.
+augroup gscode3_lock_left
+    autocmd!
+    autocmd VimEnter * if winnr('$') >= 2 | 1wincmd w | setlocal readonly nomodifiable | 2wincmd w | endif
+augroup END
+
+" IDE-style save / quit bindings.
+" The wrapper script runs `stty -ixon susp undef` so Ctrl-S / Ctrl-X reach vim
+" instead of getting eaten by the terminal (flow-control / suspend).
+"
+" Ctrl-S saves the editable file.
+nnoremap <silent> <C-s> :w<CR>
+inoremap <silent> <C-s> <C-o>:w<CR>
+vnoremap <silent> <C-s> <C-c>:w<CR>
+
+" Ctrl-X quits everything (asks if unsaved). Chosen because Ctrl-Q is
+" historically captured by terminal flow control and many macOS configs.
+nnoremap <silent> <C-x> :qa<CR>
+inoremap <silent> <C-x> <C-o>:qa<CR>
+
+" Alt-Down / Alt-Up jump to the next / previous diff hunk (IDE-style
+" alternative to vim's `]c` / `[c`).
+nnoremap <silent> <M-Down> ]czz
+nnoremap <silent> <M-Up>   [czz
+inoremap <silent> <M-Down> <C-o>]c<C-o>zz
+inoremap <silent> <M-Up>   <C-o>[c<C-o>zz
+
+" Make the editable window (right) the active one on start, and bounce back
+" if anything (mouse click, Ctrl-W, etc.) tries to focus the read-only pane.
+autocmd VimEnter * 2wincmd w
+augroup gscode3_stay_right
+    autocmd!
+    autocmd WinEnter * if winnr() == 1 && winnr('$') >= 2 | 2wincmd w | endif
+augroup END
+
+" Disable vim's built-in window-switching shortcuts so the user can't get
+" stuck in the read-only HEAD pane.
+nnoremap <C-w> <Nop>
+inoremap <C-w> <Nop>
+
+" Friendly status line hint.
+autocmd VimEnter * echo "[gscode3] Type: i   Stop typing: Esc   Save: Ctrl-S   Quit: Ctrl-X   (gscode3 --help for full cheatsheet)"

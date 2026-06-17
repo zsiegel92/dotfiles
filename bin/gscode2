@@ -1,0 +1,90 @@
+#!/usr/bin/env zsh
+# Like gscode, but pressing Enter opens a side-by-side diff viewer for the
+# selected file. Quit the viewer (q) to return to the fzf list.
+# Usage: gscode2 [query]
+#        gscode2 --help    show the keyboard cheatsheet for the diff viewer
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    cat <<'EOF'
+gscode2 — side-by-side diff viewer
+
+  Fuzzy-pick a changed file (fzf) → render a full-width two-column diff
+  with syntax highlighting (delta) in a pager (less). Quit the pager to
+  return to the picker. Empty pick exits.
+
+KEYBOARD CHEATSHEET
+
+  In the fzf picker
+    ↑ / ↓                 move selection
+    type                  filter
+    Enter                 open the selected file in the diff viewer
+    Alt-↑ / Alt-↓         scroll the preview pane
+    Esc / Ctrl-C          exit gscode2
+
+  In the diff viewer (less)
+    ↑ / ↓                 scroll one line
+    Space  / b            scroll one page down / up
+    PageDn / PageUp       scroll one page
+    g                     jump to the top
+    G                     jump to the bottom
+    n                     JUMP TO NEXT CHANGE HUNK (pre-seeded search)
+    N                     jump to previous change hunk
+    /pattern <Enter>      search forward for any text
+    ?pattern <Enter>      search backward
+    q                     quit the viewer (back to fzf picker)
+
+  Text selection / copy (macOS)
+    Click-drag normally   selects text — Cmd-C copies it. less doesn't
+                          capture the mouse, so this just works.
+EOF
+    exit 0
+fi
+
+fzf_query="$*"
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+
+while true; do
+    changed_files=$("$HELPERS/gscode_changed_files")
+    if [ -z "$changed_files" ]; then
+        break
+    fi
+    selected_filename=$(printf '%s\n' "$changed_files" | fzf \
+        --query="$fzf_query" \
+        --no-mouse \
+        --no-sort \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --bind alt-up:preview-up,alt-down:preview-down \
+        --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
+    if [ -z "$selected_filename" ]; then
+        break
+    fi
+
+    # Measure the real terminal width from the controlling TTY. $COLUMNS and
+    # bare `tput cols` can return 80 when the script runs inside a pipeline,
+    # which makes delta render narrow panels. Reading from /dev/tty gets the
+    # actual width regardless of pipeline context.
+    cols=$(stty size < /dev/tty 2>/dev/null | awk '{print $2}')
+    if [ -z "$cols" ] || [ "$cols" -lt 40 ]; then
+        cols=$(tput cols 2>/dev/null)
+    fi
+    [ -z "$cols" ] && cols=200
+    export COLUMNS="$cols"
+
+    # Pre-seed a `less` search pattern that matches delta's per-hunk
+    # header box (each hunk starts with a line containing `┐`, the
+    # box-drawing top-right corner). With this, `n` in less jumps to the
+    # next change hunk and `N` to the previous one.
+    HUNK_PATTERN='┐'
+
+    if git ls-files --error-unmatch -- "$selected_filename" >/dev/null 2>&1; then
+        git diff --color=always -- "$selected_filename" \
+            | delta --side-by-side --line-numbers --width "$cols" --paging=never \
+            | less -R --tabs=4 --no-init "+/$HUNK_PATTERN"
+    elif [ -f "$selected_filename" ]; then
+        bat --color=always --paging=always --style=numbers --terminal-width="$cols" -- "$selected_filename" \
+            || cat -- "$selected_filename"
+    fi
+done

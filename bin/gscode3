@@ -1,0 +1,124 @@
+#!/usr/bin/env zsh
+# Like gscode2, but the right pane is an actual editor (vim -d) so you can
+# edit the working-tree file while seeing the HEAD version side-by-side.
+# Usage: gscode3 [query]
+#        gscode3 --help    show the keyboard cheatsheet for the editor
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    cat <<'EOF'
+gscode3 — side-by-side diff editor
+
+  Fuzzy-pick a changed file, then drop into a two-pane vim view:
+    LEFT  = HEAD version (read-only)
+    RIGHT = working-tree file (editable, saves to disk)
+  Quitting the editor returns you to the file picker. Empty pick exits.
+
+KEYBOARD CHEATSHEET (inside the editor)
+
+  Movement
+    ↑ ↓ ← →               move cursor (works in both normal & insert mode)
+    PageUp / PageDown     scroll a page
+    Home / End            start / end of line
+    Mouse click           move cursor / select
+    Mouse wheel           scroll
+
+  Editing (you start in normal mode — press `i` to type)
+    i                     enter insert mode (type normally)
+    Esc                   leave insert mode (back to normal/command mode)
+    u                     undo (in normal mode — press Esc first if typing)
+    Ctrl-R                redo (in normal mode)
+
+  Copy & paste (macOS)
+    Shift + arrows        extend a selection (visual mode)
+    y                     copy the selection to the system clipboard. After
+                          this, Cmd-V works in any other app.
+    Cmd-V (in insert mode)
+                          paste — the terminal types the clipboard text
+                          directly. Make sure you pressed `i` first.
+    Option + click-drag   bypass vim's mouse and use macOS Terminal's own
+                          selection (then Cmd-C works normally). Handy for
+                          grabbing text out of the read-only HEAD pane.
+    p (in normal mode)    paste from the system clipboard at the cursor.
+
+  Note on "select text"
+    Shift+arrows puts vim into its own *visual mode* — that's a vim
+    selection, not a macOS selection. Plain Cmd-C will not copy it. Press
+    `y` to actually put the selection on the clipboard.
+
+  Save & quit
+    Ctrl-S                save the right (editable) pane
+    Ctrl-X                quit. PROMPTS if there are unsaved changes —
+                          it does NOT auto-save. Save first with Ctrl-S,
+                          or type :qa! <Enter> to discard changes.
+    :w  <Enter>           save (typed in normal mode)
+    :wqa <Enter>          save AND quit
+    :qa! <Enter>          quit, discarding unsaved changes
+
+  Diff navigation
+    Alt-↓                 jump to next change hunk (works in any mode)
+    Alt-↑                 jump to previous change hunk
+    ] then c              vim-native equivalent (normal mode, keys in
+                          sequence — press `]`, release, press `c`)
+    [ then c              previous change, vim-native
+
+TIP
+  If you accidentally start typing and weird things happen, press Esc to
+  return to normal mode, then `u` to undo.
+EOF
+    exit 0
+fi
+
+fzf_query="$*"
+HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+VIMRC="$HELPERS/gscode3_vimrc"
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "gscode3: not inside a git repo" >&2
+    exit 1
+}
+
+while true; do
+    changed_files=$("$HELPERS/gscode_changed_files")
+    if [ -z "$changed_files" ]; then
+        break
+    fi
+    selected_filename=$(printf '%s\n' "$changed_files" | fzf \
+        --query="$fzf_query" \
+        --no-mouse \
+        --no-sort \
+        --tac \
+        --ansi \
+        --border \
+        --wrap \
+        --bind alt-up:preview-up,alt-down:preview-down \
+        --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
+    if [ -z "$selected_filename" ]; then
+        break
+    fi
+
+    abs_path="$repo_root/$selected_filename"
+    tmpdir=$(mktemp -d -t gscode3.XXXXXX)
+    base=$(basename "$selected_filename")
+    head_copy="$tmpdir/HEAD__$base"
+
+    if git ls-files --error-unmatch -- "$selected_filename" >/dev/null 2>&1; then
+        # Tracked file: pull HEAD version into a temp file.
+        git show "HEAD:$selected_filename" > "$head_copy" 2>/dev/null || : > "$head_copy"
+    else
+        # Untracked: HEAD side is empty.
+        : > "$head_copy"
+    fi
+
+    # Disable terminal flow control & suspend so Ctrl-S / Ctrl-Q / Ctrl-Z
+    # reach vim instead of being eaten by the tty. Restore on exit.
+    old_stty=$(stty -g </dev/tty 2>/dev/null)
+    stty -ixon -ixoff susp undef </dev/tty 2>/dev/null
+
+    # vim -d: diff mode, two windows. Left = HEAD (read-only via vimrc),
+    # right = working-tree file (editable, saves to disk).
+    vim -u "$VIMRC" -d "$head_copy" "$abs_path"
+
+    [ -n "$old_stty" ] && stty "$old_stty" </dev/tty 2>/dev/null
+
+    rm -rf "$tmpdir"
+done
