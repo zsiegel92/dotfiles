@@ -1,8 +1,31 @@
 #!/usr/bin/env zsh
 # Repeatedly fuzzy-select modified/untracked files and open each in VS Code.
 # Usage: gscode [query]
-fzf_query="$*"
+#
+# Keys in the picker:
+#   Enter    open the selected file in VS Code
+#   Ctrl-D   open the selected file in `code --diff` (HEAD vs working tree)
+
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+# Internal: invoked by the fzf ctrl-d binding. Opens `code --diff HEAD..working`
+# for the given file. Untracked files have nothing to compare, so we just open.
+if [ "$1" = "--diff-file" ]; then
+    f="$2"
+    [ -z "$f" ] && exit 0
+    if git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        basename=$(basename "$f")
+        LEFT="/tmp/__head__${basename}"
+        git show "HEAD:$f" >"$LEFT" 2>/dev/null || : >"$LEFT"
+        code --diff "$LEFT" "$f"
+    else
+        code "$f"
+    fi
+    exit 0
+fi
+
+fzf_query="$*"
 changed_files=$("$HELPERS/gscode_changed_files")
 while true; do
     selected_filename=$(printf '%s\n' "$changed_files" | fzf \
@@ -14,7 +37,9 @@ while true; do
     --border \
     --wrap \
     --ansi \
+    --header $'enter: open in code · ctrl-d: code --diff (HEAD vs working)' \
     --bind alt-up:preview-up,alt-down:preview-down \
+    --bind "ctrl-d:execute(\"$SELF\" --diff-file {})" \
     --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
     if [ -n "$selected_filename" ]; then
         code "$selected_filename"
