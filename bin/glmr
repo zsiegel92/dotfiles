@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Create a new GitLab MR for the current branch and open it in the browser.
+# Usage: glmr [base-branch]  (default base: main)
+gls_require_command glab || exit
+
+base="${1:-main}"
+
+exec glab mr create --web --push --target-branch "$base"
