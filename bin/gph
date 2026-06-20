@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# push to git remote
+git push origin HEAD
