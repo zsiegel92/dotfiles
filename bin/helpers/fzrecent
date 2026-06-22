@@ -3,14 +3,25 @@
 # Each row shows the modified date (Myyyy-MM-dd) next to the path (with the
 # search directory's prefix stripped for readability). The full path is printed
 # on selection. Preview shows the file contents.
-# Usage: fzrecent [dir=.]
+# Usage: fzrecent [-d depth] [-f] [dir=.]
+#   -d depth  limit recursion to <depth> directory levels (default: infinite)
+#   -f        only files in the immediate directory (equivalent to -d 1)
+depth=""
+while getopts "d:f" opt; do
+  case "$opt" in
+    d) depth="$OPTARG" ;;
+    f) depth=1 ;;
+    *) echo "usage: fzrecent [-d depth] [-f] [dir=.]" >&2; exit 1 ;;
+  esac
+done
+shift $((OPTIND - 1))
 dir="${1:-.}"
 
 # Per file emit: epoch<TAB>Myyyy-MM-dd<TAB>fullpath. Sort newest-first, drop the
 # epoch sort key, then add a display column with the "<dir>/" prefix stripped:
 #   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
 # fzf shows the date + display name, but returns (and previews) the full path.
-find -H "$dir" -type f -print0 \
+find -H "$dir" ${depth:+-maxdepth "$depth"} -type f -print0 \
   | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
   | sort -rn \
   | cut -f2- \
