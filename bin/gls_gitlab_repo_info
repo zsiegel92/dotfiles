@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Print GitLab project metadata for a local repo.
+# Usage: gls_gitlab_repo_info <repo-dir>
+repo_dir="$1"
+
+if [ -z "$repo_dir" ]; then
+  echo "Usage: gls_gitlab_repo_info <repo-dir>" >&2
+  exit 2
+fi
+
+repo_dir=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+origin_url=$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)
+remote_url=""
+
+case "$origin_url" in
+  *gitlab*) remote_url="$origin_url" ;;
+esac
+
+if [ -z "$remote_url" ]; then
+  remote_url=$(git -C "$repo_dir" remote -v 2>/dev/null | awk '$3 == "(fetch)" && $2 ~ /gitlab/ { print $2; exit }')
+fi
+
+if [ -z "$remote_url" ]; then
+  exit 0
+fi
+
+case "$remote_url" in
+  git@*:*)
+    rest=${remote_url#git@}
+    host=${rest%%:*}
+    project_path=${rest#*:}
+    ;;
+  ssh://git@*/*)
+    rest=${remote_url#ssh://git@}
+    host=${rest%%/*}
+    project_path=${rest#*/}
+    ;;
+  http://*/*|https://*/*)
+    rest=${remote_url#*://}
+    host=${rest%%/*}
+    host=${host##*@}
+    project_path=${rest#*/}
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+case "$host" in
+  *gitlab*) ;;
+  *) exit 0 ;;
+esac
+
+project_path=${project_path%%\?*}
+project_path=${project_path%.git}
+project_path=${project_path#/}
+
+if [ -z "$project_path" ]; then
+  exit 0
+fi
+
+repo_name=${project_path##*/}
+mr_page_url="https://${host}/${project_path}/-/merge_requests"
+
+printf '%s\t%s\t%s\t%s\t%s\n' "$project_path" "$repo_dir" "$host" "$mr_page_url" "$repo_name"

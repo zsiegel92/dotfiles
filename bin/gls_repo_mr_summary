@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Emit one fzf row for a local GitLab repo when it has open MRs involving you.
+# Usage: gls_repo_mr_summary <cache-dir> <username-file> <repo-info-row>
+cache_dir="$1"
+username_file="$2"
+repo_info="$3"
+
+if [ -z "$cache_dir" ] || [ -z "$username_file" ] || [ -z "$repo_info" ]; then
+  echo "Usage: gls_repo_mr_summary <cache-dir> <username-file> <repo-info-row>" >&2
+  exit 2
+fi
+
+IFS=$'\t' read -r project_path repo_dir host mr_page_url repo_name <<EOF
+$repo_info
+EOF
+
+if [ -z "$project_path" ] || [ -z "$repo_dir" ] || [ -z "$host" ] || [ -z "$mr_page_url" ] || [ -z "$repo_name" ]; then
+  exit 0
+fi
+
+username=$(awk -F $'\t' -v host="$host" '$1 == host { print $2; exit }' "$username_file")
+
+if [ -z "$username" ]; then
+  exit 0
+fi
+
+involved_file=$(mktemp "${cache_dir}/involved.json.XXXXXX") || exit 0
+all_file=$(mktemp "${cache_dir}/all.json.XXXXXX") || exit 0
+
+if ! (cd "$repo_dir" && gls_involved_mrs opened "$username") > "$involved_file" 2>/dev/null; then
+  rm -f "$involved_file" "$all_file"
+  exit 0
+fi
+
+mine_count=$(jq 'length' "$involved_file" 2>/dev/null) || {
+  rm -f "$involved_file" "$all_file"
+  exit 0
+}
+
+if [ "$mine_count" -eq 0 ]; then
+  rm -f "$involved_file" "$all_file"
+  exit 0
+fi
+
+if ! (cd "$repo_dir" && gls_api_mrs "state=opened") > "$all_file" 2>/dev/null; then
+  rm -f "$involved_file" "$all_file"
+  exit 0
+fi
+
+all_count=$(jq 'length' "$all_file" 2>/dev/null) || {
+  rm -f "$involved_file" "$all_file"
+  exit 0
+}
+
+display=$(printf '%-32s open:%3s  me:%3s  %s' "$repo_name" "$all_count" "$mine_count" "$project_path")
+
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$project_path" "$display" "$repo_dir" "$mr_page_url" "$involved_file" "$all_count" "$mine_count" "$username"

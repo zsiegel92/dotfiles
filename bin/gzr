@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# GitLab fuZzy Repo selector: pick a local repo with open MRs involving you, then run gzm there.
+case "$1" in
+  -h|--help)
+    echo "Usage: gzr"
+    echo "Fuzzy-pick a local GitLab repo with open MRs involving you, then run gzm in that repo."
+    echo "Environment:"
+    echo "  GZR_REPO_ROOTS      colon-separated roots to scan (default: ~/code)"
+    echo "  GZR_FIND_MAX_DEPTH  find depth below each root (default: 4)"
+    echo "  GZR_JOBS            parallel GitLab API jobs (default: 8)"
+    echo "  GZR_REPOS_TO_IGNORE ignore-file path (default: dotfiles/.repostoignore)"
+    exit
+    ;;
+esac
+
+gls_require_command fzf || exit
+gls_require_command git || exit
+gls_require_command glab || exit
+gls_require_command jq || exit
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+default_ignore_file="$(cd "$bin_dir/.." && pwd)/.repostoignore"
+repo_roots=${GZR_REPO_ROOTS:-${GZR_REPO_ROOT:-$HOME/code}}
+ignore_file=${GZR_REPOS_TO_IGNORE:-$default_ignore_file}
+find_depth=${GZR_FIND_MAX_DEPTH:-4}
+jobs=${GZR_JOBS:-8}
+
+cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/gzr.XXXXXX") || exit
+repo_info_file=$(mktemp "${cache_dir}/repos.XXXXXX") || exit
+unique_repo_info_file=$(mktemp "${cache_dir}/repos.unique.XXXXXX") || exit
+username_file=$(mktemp "${cache_dir}/usernames.XXXXXX") || exit
+ignore_patterns_file=$(mktemp "${cache_dir}/repos.ignore.XXXXXX") || exit
+trap 'rm -rf "$cache_dir"' EXIT
+
+if [ -f "$ignore_file" ]; then
+  awk '
+    {
+      sub(/\r$/, "")
+      sub(/^[[:space:]]+/, "")
+      sub(/[[:space:]]+$/, "")
+      if ($0 != "" && $0 !~ /^#/) print
+    }
+  ' "$ignore_file" > "$ignore_patterns_file"
+fi
+
+gzr_repo_ignored() {
+  project_path="$1"
+
+  [ -s "$ignore_patterns_file" ] || return 1
+
+  while IFS= read -r pattern; do
+    case "$project_path" in
+      $pattern) return 0 ;;
+    esac
+  done < "$ignore_patterns_file"
+
+  return 1
+}
+
+old_ifs=$IFS
+IFS=:
+read -r -a roots <<< "$repo_roots"
+IFS=$old_ifs
+
+for root in "${roots[@]}"; do
+  [ -d "$root" ] || continue
+  while IFS= read -r -d '' git_path; do
+    repo_dir=${git_path%/.git}
+    repo_info=$(gls_gitlab_repo_info "$repo_dir")
+    [ -n "$repo_info" ] || continue
+    project_path=${repo_info%%$'\t'*}
+    gzr_repo_ignored "$project_path" && continue
+    printf '%s\n' "$repo_info" >> "$repo_info_file"
+  done < <(
+    find "$root" -maxdepth "$find_depth" \
+      \( -name node_modules -o -name .venv -o -name venv -o -name .direnv -o -name .cache \) -prune -o \
+      -name .git -print0 -prune 2>/dev/null
+  )
+done
+if [ ! -s "$repo_info_file" ]; then
+  echo "No non-ignored local GitLab repos found under $repo_roots"
+  exit 1
+fi
+
+LC_ALL=C sort -t $'\t' -k3,3 -k1,1 -u "$repo_info_file" > "$unique_repo_info_file"
+
+awk -F $'\t' 'NF >= 3 { print $3 }' "$unique_repo_info_file" | LC_ALL=C sort -u | while IFS= read -r gitlab_host; do
+  username=$(gls_gitlab_username "$gitlab_host" 2>/dev/null) || continue
+  [ -n "$username" ] && [ "$username" != "null" ] && printf '%s\t%s\n' "$gitlab_host" "$username"
+done > "$username_file"
+
+if [ ! -s "$username_file" ]; then
+  echo "No authenticated GitLab hosts found for local repos under $repo_roots"
+  exit 1
+fi
+
+selected=$(
+  while IFS= read -r repo_info; do
+    printf '%s\0' "$repo_info"
+  done < "$unique_repo_info_file" | xargs -0 -n1 -P "$jobs" gls_repo_mr_summary "$cache_dir" "$username_file" | \
+  fzf --ansi \
+    --preview 'gls_fzf_preview_repo_mrs {1} {3} {5} {6} {7} {8}' \
+    --preview-window='right:60%:wrap' \
+    --no-mouse \
+    --delimiter=$'\t' \
+    --with-nth=2 \
+    --header='loading repos as MR counts finish; enter: select repo, ctrl-o: open repo MRs page, alt-up/down: scroll preview' \
+    --bind="ctrl-o:execute-silent(gls_open_url {4}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+fzf_status=$?
+
+if [ "$fzf_status" -ne 0 ]; then
+  exit "$fzf_status"
+fi
+
+if [ -z "$selected" ]; then
+  echo "No repo selected"
+  exit 1
+fi
+
+repo_dir=$(printf '%s\n' "$selected" | awk -F $'\t' '{ print $3 }')
+
+if [ -z "$repo_dir" ]; then
+  echo "No repo selected"
+  exit 1
+fi
+
+cd "$repo_dir" || exit
+fzgl

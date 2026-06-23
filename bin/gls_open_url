@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Open a URL in the platform browser.
+# Usage: gls_open_url <url>
+url="$1"
+
+if [ -z "$url" ]; then
+  echo "Usage: gls_open_url <url>" >&2
+  exit 2
+fi
+
+if command -v open >/dev/null 2>&1; then
+  exec open "$url"
+fi
+
+if command -v xdg-open >/dev/null 2>&1; then
+  exec xdg-open "$url"
+fi
+
+echo "No URL opener found for $url" >&2
+exit 1

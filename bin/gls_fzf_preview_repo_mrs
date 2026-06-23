@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Render the fzf preview for a GitLab repo row.
+project_path="$1"
+repo_dir="$2"
+involved_file="$3"
+all_count="$4"
+mine_count="$5"
+current_user="$6"
+
+if [ -z "$project_path" ] || [ -z "$repo_dir" ] || [ -z "$involved_file" ]; then
+  echo "Usage: gls_fzf_preview_repo_mrs <project-path> <repo-dir> <involved-mrs-json> <all-count> <mine-count>" >&2
+  exit 2
+fi
+
+printf '%s\n' "$project_path"
+printf '%s\n' "$repo_dir"
+printf 'open: %s, related to me: %s\n\n' "$all_count" "$mine_count"
+
+if [ ! -s "$involved_file" ]; then
+  echo "No open MRs involving you."
+  exit
+fi
+
+GLS_CURRENT_USER="$current_user" gls_format_mrs < "$involved_file"
