@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Render the fzf preview for clean-local-branches.
+
+row="$1"
+
+IFS=$'\t' read -r branch display kind remote_status mr_iid target_branch web_url mr_sha title updated_at _ <<< "$row"
+
+if [ -z "$branch" ]; then
+  exit
+fi
+
+printf 'Branch: %s\n' "$branch"
+printf 'Remote: %s\n' "$remote_status"
+
+if [ "$kind" = "no-mr" ]; then
+  printf 'GitLab: no source MR found\n\n'
+  git log --oneline --graph --decorate --color=always --date=short --pretty=format:'%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset) [%an]' -n 40 "$branch" --
+  exit
+fi
+
+printf 'GitLab: %s !%s -> %s\n' "$kind" "$mr_iid" "$target_branch"
+[ -n "$updated_at" ] && printf 'Updated: %s\n' "$updated_at"
+[ -n "$mr_sha" ] && printf 'MR source SHA: %s\n' "$mr_sha"
+[ -n "$web_url" ] && printf 'URL: %s\n' "$web_url"
+printf '\n'
+
+if [ -n "$mr_iid" ] && command -v gls_fzf_preview_mr >/dev/null 2>&1; then
+  gls_fzf_preview_mr "$mr_iid" "$title" "$branch->$target_branch" ""
+else
+  git log --oneline --graph --decorate --color=always --date=short --pretty=format:'%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset) [%an]' -n 40 "$branch" --
+fi

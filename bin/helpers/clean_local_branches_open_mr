@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Open the MR URL from a clean-local-branches fzf row.
+
+row="$1"
+
+IFS=$'\t' read -r branch display kind remote_status mr_iid target_branch web_url _ <<< "$row"
+
+if [ -z "$web_url" ]; then
+  exit
+fi
+
+if command -v gls_open_url >/dev/null 2>&1; then
+  gls_open_url "$web_url" >/dev/null 2>&1 &
+else
+  glab mr view "$mr_iid" --web >/dev/null 2>&1 &
+fi

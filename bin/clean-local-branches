@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# Interactively delete local branches whose GitLab MR is done and unchanged.
+# Usage: clean-local-branches [-a|--all] [query]
+
+usage() {
+  cat <<'EOF'
+Usage: clean-local-branches [-a|--all] [--remote <name>] [query]
+
+Interactively delete local branches with fzf.
+
+Default mode lists local branches whose latest matching GitLab MR is merged or closed and whose local tip still matches the MR source SHA.
+
+Options:
+  -a, --all        Also include local branches with no GitLab source MR.
+  --remote <name> Use this git remote for remote-exists/deleted status.
+  -h, --help      Show this help.
+
+In fzf:
+  tab       select branches
+  enter     delete selected branches with git branch -D
+  ctrl-o    open the selected branch's MR
+  ctrl-a    toggle no-MR branches
+EOF
+}
+
+include_no_mr=0
+remote=origin
+query_parts=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -a|--all)
+      include_no_mr=1
+      shift
+      ;;
+    --remote)
+      if [ -z "${2:-}" ]; then
+        echo "clean-local-branches: --remote requires a value" >&2
+        exit 2
+      fi
+      remote="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit
+      ;;
+    --)
+      shift
+      query_parts+=("$@")
+      break
+      ;;
+    -*)
+      echo "clean-local-branches: unknown option $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      query_parts+=("$1")
+      shift
+      ;;
+  esac
+done
+
+query="${query_parts[*]}"
+
+gls_require_command git || exit
+gls_require_command glab || exit
+gls_require_command jq || exit
+gls_require_command fzf || exit
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+preview_helper="$bin_dir/helpers/clean_local_branches_preview"
+open_helper="$bin_dir/helpers/clean_local_branches_open_mr"
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "clean-local-branches: not inside a git repository" >&2
+  exit 1
+}
+cd "$repo_root" || exit
+
+if ! git remote get-url "$remote" >/dev/null 2>&1; then
+  first_remote=$(git remote | sed -n '1p')
+  if [ -n "$first_remote" ]; then
+    remote="$first_remote"
+  fi
+fi
+
+current_branch=$(git branch --show-current)
+remote_head=$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
+remote_head=${remote_head#"$remote/"}
+
+local_branches_json=$(
+  git for-each-ref --format='%(refname:short)%09%(objectname)' refs/heads |
+    jq -Rn --arg current "$current_branch" --arg remote_head "$remote_head" '
+      [inputs
+        | select(length > 0)
+        | split("\t")
+        | {branch: .[0], oid: .[1]}
+        | select(.branch != $current)
+        | select($remote_head == "" or .branch != $remote_head)]
+    '
+) || exit
+
+mrs_json=$(gls_api_mrs "state=all" | jq -s 'add // []') || exit
+
+remote_branches_json=$(
+  if remote_heads_output=$(git ls-remote --heads "$remote" 2>/dev/null); then
+    printf '%s\n' "$remote_heads_output" |
+      awk '$2 ~ /^refs\/heads\// { sub(/^refs\/heads\//, "", $2); print $2 }' |
+      jq -R -s 'split("\n") | map(select(length > 0))'
+  else
+    git for-each-ref --format='%(refname:short)' "refs/remotes/$remote" |
+      sed -e "s#^$remote/##" -e '/^HEAD$/d' |
+      jq -R -s 'split("\n") | map(select(length > 0))'
+  fi
+) || exit
+
+build_rows() {
+  local include_no_mr_arg="$1"
+
+  jq -nr \
+    --arg include_no_mr "$include_no_mr_arg" \
+    --argjson local_branches "$local_branches_json" \
+    --argjson mrs "$mrs_json" \
+    --argjson remote_branches "$remote_branches_json" '
+      def clean: tostring | gsub("[\t\r\n]"; " ");
+      def head_sha: .sha // .diff_refs.head_sha // "";
+      def has_open_mr($branch): any($mrs[]; .source_branch == $branch and .state == "opened");
+      def has_any_source_mr($branch): any($mrs[]; .source_branch == $branch);
+      def remote_status($branch): if any($remote_branches[]; . == $branch) then "remote:exists" else "remote:deleted" end;
+      def matching_done_mrs($branch; $oid):
+        [$mrs[]
+          | select(.source_branch == $branch)
+          | select(.state == "merged" or .state == "closed")
+          | select(head_sha == $oid)];
+      def choose_done_mr:
+        (map(select(.state == "merged")) | max_by(.updated_at // ""))
+        // (map(select(.state == "closed")) | max_by(.updated_at // ""));
+      def row($branch; $kind; $remote_status; $mr):
+        ($mr.iid // "") as $iid
+        | ($mr.target_branch // "") as $target
+        | ($mr.web_url // "") as $web_url
+        | ($mr.title // "" | clean) as $title
+        | ($mr.updated_at // "") as $updated_at
+        | ($mr | head_sha) as $mr_sha
+        | if $kind == "no-mr" then
+            "\($branch)\t\($branch)  [\($remote_status)]  [NO MR]\t\($kind)\t\($remote_status)\t\t\t\t\t\t"
+          else
+            ($kind | ascii_upcase) as $state_label
+            | "\($branch)\t\($branch)  [\($remote_status)]  [\($state_label) !\($iid) -> \($target)]  \($title)\t\($kind)\t\($remote_status)\t\($iid)\t\($target)\t\($web_url)\t\($mr_sha)\t\($title)\t\($updated_at)"
+          end;
+
+      $local_branches[]
+      | . as $local
+      | select(has_open_mr($local.branch) | not)
+      | (matching_done_mrs($local.branch; $local.oid) | choose_done_mr) as $done_mr
+      | if $done_mr != null then
+          row($local.branch; $done_mr.state; remote_status($local.branch); $done_mr)
+        elif $include_no_mr == "1" and (has_any_source_mr($local.branch) | not) then
+          row($local.branch; "no-mr"; remote_status($local.branch); {})
+        else
+          empty
+        end
+    '
+}
+
+default_rows=$(build_rows 0) || exit
+all_rows=$(build_rows 1) || exit
+
+if [ -z "$default_rows" ] && [ "$include_no_mr" -eq 0 ]; then
+  if [ -n "$all_rows" ]; then
+    echo "No merged/closed local branches matched. Run clean-local-branches -a to include branches with no MR."
+  else
+    echo "No cleanable local branches found."
+  fi
+  exit
+fi
+
+if [ -z "$all_rows" ]; then
+  echo "No cleanable local branches found."
+  exit
+fi
+
+current_query="$query"
+
+while true; do
+  if [ "$include_no_mr" -eq 1 ]; then
+    active_rows="$all_rows"
+    mode_label="showing merged/closed + no-MR branches"
+  else
+    active_rows="$default_rows"
+    mode_label="showing merged/closed branches"
+  fi
+
+  if [ -z "$active_rows" ]; then
+    include_no_mr=1
+    continue
+  fi
+
+  selected=$(
+    printf '%s\n' "$active_rows" |
+      fzf \
+        --query="$current_query" \
+        --print-query \
+        --expect=ctrl-a \
+        --multi \
+        --no-mouse \
+        --no-sort \
+        --tac \
+        --height 90% \
+        --ansi \
+        --border \
+        --wrap \
+        --delimiter=$'\t' \
+        --with-nth=2 \
+        --preview-window='right:60%:wrap' \
+        --header="tab: select, enter: git branch -D selected, ctrl-o: open MR, ctrl-a: toggle no-MR branches ($mode_label)" \
+        --bind="ctrl-o:execute-silent($open_helper {}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
+        --preview="$preview_helper {}"
+  )
+  fzf_status=$?
+
+  if [ "$fzf_status" -ne 0 ]; then
+    exit "$fzf_status"
+  fi
+
+  current_query=${selected%%$'\n'*}
+  rest=${selected#*$'\n'}
+  pressed_key=${rest%%$'\n'*}
+  selected_rows=${rest#*$'\n'}
+
+  if [ "$pressed_key" = "$rest" ]; then
+    selected_rows=""
+  fi
+
+  if [ "$pressed_key" = ctrl-a ]; then
+    if [ "$include_no_mr" -eq 1 ]; then
+      include_no_mr=0
+    else
+      include_no_mr=1
+    fi
+    continue
+  fi
+
+  if [ -z "$selected_rows" ]; then
+    echo "No branches selected"
+    exit 1
+  fi
+
+  branches=()
+  while IFS=$'\t' read -r branch _; do
+    [ -n "$branch" ] || continue
+    branches+=("$branch")
+  done <<< "$selected_rows"
+
+  if [ "${#branches[@]}" -eq 0 ]; then
+    echo "No branches selected"
+    exit 1
+  fi
+
+  printf 'Deleting %d local branch(es) with git branch -D:\n' "${#branches[@]}"
+  printf '  %s\n' "${branches[@]}"
+  git branch -D -- "${branches[@]}"
+  exit
+done
