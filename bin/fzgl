@@ -16,7 +16,8 @@ while true; do
       --delimiter=$'\t' \
       --with-nth=2 \
       --accept-nth=1 \
-      --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+      --header='enter: open MR, ctrl-b: copy branch, alt-up/down: scroll preview' \
+      --bind="ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
   if [ -z "$mr_iid" ]; then
     echo "No MR selected"
     exit 1
