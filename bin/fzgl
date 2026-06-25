@@ -2,22 +2,178 @@
 # Repeatedly fuzzy-pick a GitLab MR (from `gli`) and open it in the browser.
 # Accepts the same flags as gli (e.g. -r, --all, --done).
 gls_require_command fzf || exit
+
+fzgl_tree_rows() {
+  awk '
+    BEGIN {
+      FS = OFS = "\t"
+    }
+
+    function source_branch(branch_names, value) {
+      value = branch_names
+      sub(/->.*/, "", value)
+      return value
+    }
+
+    function target_branch(branch_names, value) {
+      value = branch_names
+      sub(/^.*->/, "", value)
+      return value
+    }
+
+    function add_child(parent_branch, child_branch, key) {
+      key = parent_branch SUBSEP child_branch
+      if (child_seen[key]) return
+
+      child_seen[key] = 1
+      child_count[parent_branch]++
+      children[parent_branch, child_count[parent_branch]] = child_branch
+    }
+
+    function render_node(branch, prefix, is_last, depth, row_index, display, i, child_branch, next_prefix, connector) {
+      if (rendered[branch]) return
+      rendered[branch] = 1
+
+      row_index = row_by_source[branch]
+      if (!row_index) return
+
+      if (depth == 0) {
+        display = branch " -> " parent[branch]
+        next_prefix = ""
+      } else {
+        connector = is_last ? "└── " : "├── "
+        display = prefix connector branch
+        next_prefix = prefix (is_last ? "    " : "│   ")
+      }
+
+      print iid[row_index], display, branch_names[row_index], actor_names[row_index], title[row_index]
+
+      for (i = 1; i <= child_count[branch]; i++) {
+        child_branch = children[branch, i]
+        render_node(child_branch, next_prefix, i == child_count[branch], depth + 1)
+      }
+    }
+
+    NF >= 5 {
+      source = source_branch($3)
+      target = target_branch($3)
+      if (source == "") next
+
+      if (!(source in row_by_source)) {
+        row_count++
+        row_by_source[source] = row_count
+        source_order[row_count] = source
+        source_seen[source] = 1
+        parent[source] = target
+        iid[row_count] = $1
+        branch_names[row_count] = $3
+        actor_names[row_count] = $4
+        title[row_count] = $5
+        add_child(target, source)
+      }
+    }
+
+    END {
+      for (i = 1; i <= row_count; i++) {
+        branch = source_order[i]
+        if (!(parent[branch] in source_seen)) {
+          roots[++root_count] = branch
+        }
+      }
+
+      if (root_count == 0) {
+        for (i = 1; i <= row_count; i++) {
+          roots[++root_count] = source_order[i]
+        }
+      }
+
+      for (i = 1; i <= root_count; i++) {
+        render_node(roots[i], "", i == root_count, 0)
+      }
+
+      for (i = 1; i <= row_count; i++) {
+        branch = source_order[i]
+        if (!rendered[branch]) {
+          render_node(branch, "", 1, 0)
+        }
+      }
+    }
+  '
+}
+
+fzgl_select_mr() {
+  local rows="$1"
+  local header="$2"
+  local view_mode="$3"
+  local fzf_args=(
+    --ansi
+    --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND"
+    --preview-window='right:60%:wrap'
+    --no-mouse
+    --delimiter=$'\t'
+    --with-nth=2
+    --expect=ctrl-g
+    --header="$header"
+    --bind="ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
+  )
+
+  if [ "$view_mode" = tree ]; then
+    fzf_args+=(--no-sort --layout=reverse)
+  fi
+
+  printf '%s\n' "$rows" | fzf "${fzf_args[@]}"
+}
+
 current_user=$(gls_gitlab_username 2>/dev/null || true)
 mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "$@") || exit
+tree_mrs=$(printf '%s\n' "$mrs" | fzgl_tree_rows) || exit
 
 GLS_VIEW_MR_USING_CACHE_COMMAND='gls_fzf_preview_mr {1} {5} {3} {4}'
+view_mode=list
 
 while true; do
-  mr_iid=$(printf '%s\n' "$mrs" | \
-    fzf --ansi \
-      --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND" \
-      --preview-window='right:60%:wrap' \
-      --no-mouse \
-      --delimiter=$'\t' \
-      --with-nth=2 \
-      --accept-nth=1 \
-      --header='enter: open MR, ctrl-b: copy branch, alt-up/down: scroll preview' \
-      --bind="ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
+  if [ "$view_mode" = tree ]; then
+    active_mrs="$tree_mrs"
+    header='enter: open MR, ctrl-b: copy branch, ctrl-g: list view, alt-up/down: scroll preview'
+  else
+    active_mrs="$mrs"
+    header='enter: open MR, ctrl-b: copy branch, ctrl-g: tree view, alt-up/down: scroll preview'
+  fi
+
+  selected=$(fzgl_select_mr "$active_mrs" "$header" "$view_mode")
+  fzf_status=$?
+
+  if [ "$fzf_status" -ne 0 ]; then
+    exit "$fzf_status"
+  fi
+
+  pressed_key=${selected%%$'\n'*}
+  selected_row=${selected#*$'\n'}
+
+  if [ "$selected_row" = "$selected" ]; then
+    selected_row=""
+  fi
+
+  if [ "$pressed_key" = ctrl-g ]; then
+    if [ "$view_mode" = tree ]; then
+      view_mode=list
+    else
+      view_mode=tree
+    fi
+    continue
+  fi
+
+  if [ -z "$selected_row" ]; then
+    selected_row="$pressed_key"
+  fi
+
+  if [ -z "$selected_row" ]; then
+    echo "No MR selected"
+    exit 1
+  fi
+
+  mr_iid=${selected_row%%$'\t'*}
+
   if [ -z "$mr_iid" ]; then
     echo "No MR selected"
     exit 1
