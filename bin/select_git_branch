@@ -69,7 +69,7 @@ select_git_branch_from_selected_row() {
 
   selected_branch=${selected_row%%$'\t'*}
   if [ "$selected_branch" = "$selected_row" ]; then
-    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──[[:space:]]*//' -e 's/^[[:space:]]*//' -e 's/^\* //')
+    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──*[[:space:]]*//' -e 's/^[[:space:]]*//' -e 's/^\* //')
   fi
 
   printf '%s\n' "$selected_branch"

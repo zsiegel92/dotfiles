@@ -121,9 +121,9 @@ def print_tree_rows(rows, parent_indices):
             display = visible_branch(rows, index)
             next_prefix = ""
         else:
-            connector = "└── " if is_last else "├── "
+            connector = "└─ " if is_last else "├─ "
             display = prefix + connector + visible_branch(rows, index)
-            next_prefix = prefix + ("    " if is_last else "│   ")
+            next_prefix = prefix + ("   " if is_last else "│  ")
 
         print("\t".join([row["branch"], display, row["oid"], row["marker"]]))
 

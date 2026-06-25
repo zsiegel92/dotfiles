@@ -41,9 +41,9 @@ fzgl_tree_rows() {
         display = branch " -> " parent[branch]
         next_prefix = ""
       } else {
-        connector = is_last ? "└── " : "├── "
+        connector = is_last ? "└─ " : "├─ "
         display = prefix connector branch
-        next_prefix = prefix (is_last ? "    " : "│   ")
+        next_prefix = prefix (is_last ? "   " : "│  ")
       }
 
       print iid[row_index], display, branch_names[row_index], actor_names[row_index], title[row_index]
