@@ -26,101 +26,127 @@ select_git_branch_rows() {
 }
 
 select_git_branch_tree_rows() {
-  local branch oid marker i j distance best_distance
-  local -a branches
-  local -a oids
-  local -a markers
-  local -a parents
+  python3 -c '
+import collections
+import subprocess
+import sys
 
-  while IFS=$'\t' read -r branch _ oid marker; do
-    [ -n "$branch" ] || continue
-    branches+=("$branch")
-    oids+=("$oid")
-    markers+=("$marker")
-    parents+=("")
-  done
+rows = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line:
+        continue
 
-  for ((i = 0; i < ${#branches[@]}; i++)); do
-    best_distance=
+    parts = line.split("\t")
+    if len(parts) < 4:
+        continue
 
-    for ((j = 0; j < ${#branches[@]}; j++)); do
-      [ "$i" -ne "$j" ] || continue
-      [ "${oids[$i]}" != "${oids[$j]}" ] || continue
+    rows.append({
+        "branch": parts[0],
+        "oid": parts[2],
+        "marker": parts[3],
+    })
 
-      if git merge-base --is-ancestor "${oids[$j]}" "${oids[$i]}" 2>/dev/null; then
-        distance=$(git rev-list --count "${oids[$j]}..${oids[$i]}" 2>/dev/null) || continue
+if not rows:
+    sys.exit(0)
 
-        if [ -z "$best_distance" ] || [ "$distance" -lt "$best_distance" ]; then
-          parents[$i]=$j
-          best_distance=$distance
-        fi
-      fi
-    done
-  done
+try:
+    result = subprocess.run(
+        ["git", "rev-list", "--parents", "--branches"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+except subprocess.CalledProcessError as exc:
+    sys.stderr.write(exc.stderr)
+    sys.exit(exc.returncode)
 
-  select_git_branch_render_tree() {
-    local node="$1"
-    local prefix="$2"
-    local is_last="$3"
-    local depth="$4"
-    local visible_branch next_prefix connector child_count child_seen child k
-    local -a child_indices
+parents_by_commit = {}
+for line in result.stdout.splitlines():
+    parts = line.split()
+    if parts:
+        parents_by_commit[parts[0]] = parts[1:]
 
-    [ "${rendered[$node]}" = 1 ] && return
-    rendered[$node]=1
+tip_indices_by_oid = collections.defaultdict(list)
+for index, row in enumerate(rows):
+    tip_indices_by_oid[row["oid"]].append(index)
 
-    if [ "${markers[$node]}" = "*" ]; then
-      visible_branch="* ${branches[$node]}"
-    else
-      visible_branch="${branches[$node]}"
-    fi
+parent_indices = [None] * len(rows)
 
-    if [ "$depth" -eq 0 ]; then
-      printf '%s\t%s\t%s\t%s\n' "${branches[$node]}" "$visible_branch" "${oids[$node]}" "${markers[$node]}"
-      next_prefix=""
-    else
-      connector="├── "
-      [ "$is_last" = 1 ] && connector="└── "
-      printf '%s\t%s%s\t%s\t%s\n' "${branches[$node]}" "$prefix$connector" "$visible_branch" "${oids[$node]}" "${markers[$node]}"
-      next_prefix="$prefix"
-      if [ "$is_last" = 1 ]; then
-        next_prefix="${next_prefix}    "
-      else
-        next_prefix="${next_prefix}│   "
-      fi
-    fi
+for index, row in enumerate(rows):
+    start_oid = row["oid"]
+    queue = collections.deque()
+    seen = {start_oid}
 
-    for ((k = 0; k < ${#branches[@]}; k++)); do
-      if [ "${parents[$k]}" = "$node" ]; then
-        child_indices+=("$k")
-      fi
-    done
+    for parent_oid in parents_by_commit.get(start_oid, []):
+        if parent_oid not in seen:
+            seen.add(parent_oid)
+            queue.append(parent_oid)
 
-    child_count=${#child_indices[@]}
-    child_seen=0
-    for child in "${child_indices[@]}"; do
-      child_seen=$((child_seen + 1))
-      if [ "$child_seen" -eq "$child_count" ]; then
-        select_git_branch_render_tree "$child" "$next_prefix" 1 $((depth + 1))
-      else
-        select_git_branch_render_tree "$child" "$next_prefix" 0 $((depth + 1))
-      fi
-    done
-  }
+    while queue:
+        oid = queue.popleft()
+        found_parent = None
 
-  local -a rendered
+        for candidate_index in tip_indices_by_oid.get(oid, []):
+            if candidate_index != index and rows[candidate_index]["oid"] != start_oid:
+                found_parent = candidate_index
+                break
 
-  for ((i = 0; i < ${#branches[@]}; i++)); do
-    if [ -z "${parents[$i]}" ]; then
-      select_git_branch_render_tree "$i" "" 1 0
-    fi
-  done
+        if found_parent is not None:
+            parent_indices[index] = found_parent
+            break
 
-  for ((i = 0; i < ${#branches[@]}; i++)); do
-    if [ "${rendered[$i]}" != 1 ]; then
-      select_git_branch_render_tree "$i" "" 1 0
-    fi
-  done
+        for parent_oid in parents_by_commit.get(oid, []):
+            if parent_oid not in seen:
+                seen.add(parent_oid)
+                queue.append(parent_oid)
+
+children = [[] for _ in rows]
+roots = []
+
+for index, parent_index in enumerate(parent_indices):
+    if parent_index is None:
+        roots.append(index)
+    else:
+        children[parent_index].append(index)
+
+rendered = set()
+
+def visible_branch(index):
+    branch = rows[index]["branch"]
+    if rows[index]["marker"] == "*":
+        return "* " + branch
+    return branch
+
+def render(index, prefix, is_last, depth):
+    if index in rendered:
+        return
+
+    rendered.add(index)
+    row = rows[index]
+
+    if depth == 0:
+        display = visible_branch(index)
+        next_prefix = ""
+    else:
+        connector = "└── " if is_last else "├── "
+        display = prefix + connector + visible_branch(index)
+        next_prefix = prefix + ("    " if is_last else "│   ")
+
+    print("\t".join([row["branch"], display, row["oid"], row["marker"]]))
+
+    child_indices = children[index]
+    for child_position, child_index in enumerate(child_indices):
+        render(child_index, next_prefix, child_position == len(child_indices) - 1, depth + 1)
+
+for root_index in roots:
+    render(root_index, "", True, 0)
+
+for index in range(len(rows)):
+    if index not in rendered:
+        render(index, "", True, 0)
+'
 }
 
 select_git_branch_fzf() {
