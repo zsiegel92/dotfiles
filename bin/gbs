@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fuzzy-select a branch and check it out.
-# Usage: gbs [query]
-branch=$(select_git_branch "$*")
+# Usage: gbs [-g|--graph|--tree] [query]
+branch=$(select_git_branch "$@")
 if [ -n "$branch" ]; then
     echo "git checkout $branch"
     git checkout "$branch"

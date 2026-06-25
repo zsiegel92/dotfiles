@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
-# Usage: select_git_branch [query]
-query="$1"
+# Usage: select_git_branch [-g|--graph|--tree] [query]
+initial_view_mode=list
+
+case "$1" in
+  -g|--graph|--tree)
+    initial_view_mode=tree
+    shift
+    ;;
+esac
+
+query="$*"
 
 select_git_branch_rows() {
   git branch --format='%(HEAD)%09%(refname:short)%09%(objectname)' | awk -F '\t' '
@@ -130,6 +139,7 @@ select_git_branch_fzf() {
     --wrap
     --delimiter=$'\t'
     --with-nth=2
+    --accept-nth=1
     --expect=ctrl-g
     --preview-window=up:3
     --header="$header"
@@ -146,18 +156,78 @@ select_git_branch_fzf() {
   printf '%s\n' "$rows" | fzf "${fzf_args[@]}"
 }
 
+select_git_branch_from_selected_row() {
+  local selected_row="$1"
+  local selected_branch
+
+  selected_branch=${selected_row%%$'\t'*}
+  if [ "$selected_branch" = "$selected_row" ]; then
+    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──[[:space:]]*//' -e 's/^[[:space:]]*//' -e 's/^\* //')
+  fi
+
+  printf '%s\n' "$selected_branch"
+}
+
+select_git_branch_start_tree_job() {
+  tree_dir=$(mktemp -d "${TMPDIR:-/tmp}/select-git-branch.XXXXXX") || exit
+  tree_rows_file="$tree_dir/tree_rows"
+  tree_status_file="$tree_dir/tree_status"
+  tree_error_file="$tree_dir/tree_error"
+
+  (
+    printf '%s\n' "$branch_rows" | select_git_branch_tree_rows > "$tree_rows_file" 2> "$tree_error_file"
+    printf '%s\n' "$?" > "$tree_status_file"
+  ) &
+  tree_pid=$!
+}
+
+select_git_branch_load_tree_rows() {
+  if [ -n "$tree_branch_rows" ]; then
+    return
+  fi
+
+  if [ ! -f "$tree_status_file" ]; then
+    printf 'Loading branch tree...\n' >&2
+    wait "$tree_pid"
+  fi
+
+  tree_status=$(cat "$tree_status_file" 2>/dev/null || printf 1)
+  if [ "$tree_status" -ne 0 ]; then
+    if [ -s "$tree_error_file" ]; then
+      cat "$tree_error_file" >&2
+    fi
+    exit "$tree_status"
+  fi
+
+  tree_branch_rows=$(cat "$tree_rows_file") || exit
+}
+
+select_git_branch_cleanup() {
+  if [ -n "$tree_pid" ] && kill -0 "$tree_pid" 2>/dev/null; then
+    kill "$tree_pid" 2>/dev/null
+    wait "$tree_pid" 2>/dev/null
+  fi
+
+  if [ -n "$tree_dir" ]; then
+    rm -rf "$tree_dir"
+  fi
+}
+
 branch_rows=$(select_git_branch_rows) || exit
-tree_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_tree_rows) || exit
-view_mode=list
+tree_branch_rows=
+select_git_branch_start_tree_job
+trap select_git_branch_cleanup EXIT
+view_mode="$initial_view_mode"
 current_query="$query"
 
 while true; do
   if [ "$view_mode" = tree ]; then
+    select_git_branch_load_tree_rows
     active_rows="$tree_branch_rows"
     header='enter: select branch, ctrl-g: list view, alt-up/down: scroll preview'
   else
     active_rows="$branch_rows"
-    header='enter: select branch, ctrl-g: tree view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: graph view, alt-up/down: scroll preview'
   fi
 
   selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query")
@@ -185,13 +255,14 @@ while true; do
     if [ "$view_mode" = tree ]; then
       view_mode=list
     else
+      select_git_branch_load_tree_rows
       view_mode=tree
     fi
     continue
   fi
 
   if [ -n "$selected_row" ]; then
-    printf '%s\n' "${selected_row%%$'\t'*}"
+    select_git_branch_from_selected_row "$selected_row"
   fi
 
   exit
