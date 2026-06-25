@@ -2,18 +2,197 @@
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
 # Usage: select_git_branch [query]
 query="$1"
-selected_branch=$(git branch | fzf \
-    --query="$query" \
-    --no-mouse \
-    --no-sort  \
-    --tac \
-    --height 90% \
-    --ansi \
-    --border \
-    --wrap \
-    --ansi \
-    --preview-window=up:3 \
-    --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" $(echo {} | sed "s/^[* ]*//")')
-if [ -n "$selected_branch" ]; then
-    echo "$(echo "$selected_branch" | sed 's/^[* ]*//')"
-fi
+
+select_git_branch_rows() {
+  git branch --format='%(HEAD)%09%(refname:short)%09%(objectname)' | awk -F '\t' '
+    BEGIN {
+      OFS = "\t"
+    }
+
+    {
+      marker = $1 == "*" ? "*" : " "
+      print $2, marker " " $2, $3, marker
+    }
+  '
+}
+
+select_git_branch_tree_rows() {
+  local branch oid marker i j distance best_distance
+  local -a branches
+  local -a oids
+  local -a markers
+  local -a parents
+
+  while IFS=$'\t' read -r branch _ oid marker; do
+    [ -n "$branch" ] || continue
+    branches+=("$branch")
+    oids+=("$oid")
+    markers+=("$marker")
+    parents+=("")
+  done
+
+  for ((i = 0; i < ${#branches[@]}; i++)); do
+    best_distance=
+
+    for ((j = 0; j < ${#branches[@]}; j++)); do
+      [ "$i" -ne "$j" ] || continue
+      [ "${oids[$i]}" != "${oids[$j]}" ] || continue
+
+      if git merge-base --is-ancestor "${oids[$j]}" "${oids[$i]}" 2>/dev/null; then
+        distance=$(git rev-list --count "${oids[$j]}..${oids[$i]}" 2>/dev/null) || continue
+
+        if [ -z "$best_distance" ] || [ "$distance" -lt "$best_distance" ]; then
+          parents[$i]=$j
+          best_distance=$distance
+        fi
+      fi
+    done
+  done
+
+  select_git_branch_render_tree() {
+    local node="$1"
+    local prefix="$2"
+    local is_last="$3"
+    local depth="$4"
+    local visible_branch next_prefix connector child_count child_seen child k
+    local -a child_indices
+
+    [ "${rendered[$node]}" = 1 ] && return
+    rendered[$node]=1
+
+    if [ "${markers[$node]}" = "*" ]; then
+      visible_branch="* ${branches[$node]}"
+    else
+      visible_branch="${branches[$node]}"
+    fi
+
+    if [ "$depth" -eq 0 ]; then
+      printf '%s\t%s\t%s\t%s\n' "${branches[$node]}" "$visible_branch" "${oids[$node]}" "${markers[$node]}"
+      next_prefix=""
+    else
+      connector="├── "
+      [ "$is_last" = 1 ] && connector="└── "
+      printf '%s\t%s%s\t%s\t%s\n' "${branches[$node]}" "$prefix$connector" "$visible_branch" "${oids[$node]}" "${markers[$node]}"
+      next_prefix="$prefix"
+      if [ "$is_last" = 1 ]; then
+        next_prefix="${next_prefix}    "
+      else
+        next_prefix="${next_prefix}│   "
+      fi
+    fi
+
+    for ((k = 0; k < ${#branches[@]}; k++)); do
+      if [ "${parents[$k]}" = "$node" ]; then
+        child_indices+=("$k")
+      fi
+    done
+
+    child_count=${#child_indices[@]}
+    child_seen=0
+    for child in "${child_indices[@]}"; do
+      child_seen=$((child_seen + 1))
+      if [ "$child_seen" -eq "$child_count" ]; then
+        select_git_branch_render_tree "$child" "$next_prefix" 1 $((depth + 1))
+      else
+        select_git_branch_render_tree "$child" "$next_prefix" 0 $((depth + 1))
+      fi
+    done
+  }
+
+  local -a rendered
+
+  for ((i = 0; i < ${#branches[@]}; i++)); do
+    if [ -z "${parents[$i]}" ]; then
+      select_git_branch_render_tree "$i" "" 1 0
+    fi
+  done
+
+  for ((i = 0; i < ${#branches[@]}; i++)); do
+    if [ "${rendered[$i]}" != 1 ]; then
+      select_git_branch_render_tree "$i" "" 1 0
+    fi
+  done
+}
+
+select_git_branch_fzf() {
+  local rows="$1"
+  local header="$2"
+  local view_mode="$3"
+  local current_query="$4"
+  local fzf_args=(
+    --query="$current_query"
+    --print-query
+    --no-mouse
+    --no-sort
+    --height 90%
+    --ansi
+    --border
+    --wrap
+    --delimiter=$'\t'
+    --with-nth=2
+    --expect=ctrl-g
+    --preview-window=up:3
+    --header="$header"
+    --bind="alt-up:preview-up,alt-down:preview-down"
+    --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {1} --'
+  )
+
+  if [ "$view_mode" = tree ]; then
+    fzf_args+=(--layout=reverse)
+  else
+    fzf_args+=(--tac)
+  fi
+
+  printf '%s\n' "$rows" | fzf "${fzf_args[@]}"
+}
+
+branch_rows=$(select_git_branch_rows) || exit
+tree_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_tree_rows) || exit
+view_mode=list
+current_query="$query"
+
+while true; do
+  if [ "$view_mode" = tree ]; then
+    active_rows="$tree_branch_rows"
+    header='enter: select branch, ctrl-g: list view, alt-up/down: scroll preview'
+  else
+    active_rows="$branch_rows"
+    header='enter: select branch, ctrl-g: tree view, alt-up/down: scroll preview'
+  fi
+
+  selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query")
+  fzf_status=$?
+
+  if [ "$fzf_status" -ne 0 ]; then
+    exit "$fzf_status"
+  fi
+
+  current_query=${selected%%$'\n'*}
+  rest=${selected#*$'\n'}
+  pressed_key=${rest%%$'\n'*}
+  selected_row=${rest#*$'\n'}
+
+  if [ "$selected_row" = "$rest" ]; then
+    selected_row=""
+  fi
+
+  if [ -z "$selected_row" ] && [ "$pressed_key" != ctrl-g ]; then
+    selected_row="$pressed_key"
+    pressed_key=
+  fi
+
+  if [ "$pressed_key" = ctrl-g ]; then
+    if [ "$view_mode" = tree ]; then
+      view_mode=list
+    else
+      view_mode=tree
+    fi
+    continue
+  fi
+
+  if [ -n "$selected_row" ]; then
+    printf '%s\n' "${selected_row%%$'\t'*}"
+  fi
+
+  exit
+done
