@@ -2,21 +2,38 @@
 # Convert repo-root-relative Git paths from stdin to paths relative to $PWD.
 
 prefix=$(git rev-parse --show-prefix 2>/dev/null) || exit
-up_prefix=
+cwd_components=()
 
 if [ -n "$prefix" ]; then
     IFS=/ read -r -a components <<< "${prefix%/}"
-    for _ in "${components[@]}"; do
-        up_prefix="${up_prefix}../"
-    done
+    cwd_components=("${components[@]}")
 fi
 
 while IFS= read -r repo_path; do
     [ -n "$repo_path" ] || continue
 
-    if [ -n "$prefix" ] && [[ "$repo_path" == "$prefix"* ]]; then
-        printf '%s\n' "${repo_path#"$prefix"}"
-    else
-        printf '%s\n' "${up_prefix}${repo_path}"
-    fi
+    IFS=/ read -r -a path_components <<< "$repo_path"
+    common=0
+
+    while [ "$common" -lt "${#cwd_components[@]}" ] \
+        && [ "$common" -lt "${#path_components[@]}" ] \
+        && [ "${cwd_components[$common]}" = "${path_components[$common]}" ]; do
+        ((common++))
+    done
+
+    relative=
+    for ((i = common; i < ${#cwd_components[@]}; i++)); do
+        relative="${relative}../"
+    done
+
+    rest=
+    for ((i = common; i < ${#path_components[@]}; i++)); do
+        if [ -n "$rest" ]; then
+            rest="${rest}/${path_components[$i]}"
+        else
+            rest="${path_components[$i]}"
+        fi
+    done
+
+    printf '%s%s\n' "$relative" "$rest"
 done
