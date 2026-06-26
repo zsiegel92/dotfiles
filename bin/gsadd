@@ -4,12 +4,13 @@
 # Usage: gsadd [query]
 fzf_query="$*"
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
-local staged_output changed_output fzf_input selected_output fzf_status file
+local staged_output changed_output fzf_input selected_output fzf_status file repo_root
 local has_staged=0
 local -a staged_files changed_files all_files selected_files files_to_add files_to_reset
 local -A staged_map selected_map seen_files
 
-staged_output=$(git diff --cached --name-only)
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return
+staged_output=$(git -C "$repo_root" diff --cached --name-only | "$HELPERS/git_paths_relative_to_cwd")
 changed_output=$("$HELPERS/gscode_changed_files")
 staged_files=("${(@f)staged_output}")
 changed_files=("${(@f)changed_output}")

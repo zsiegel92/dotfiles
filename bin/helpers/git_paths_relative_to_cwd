@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Convert repo-root-relative Git paths from stdin to paths relative to $PWD.
+
+prefix=$(git rev-parse --show-prefix 2>/dev/null) || exit
+up_prefix=
+
+if [ -n "$prefix" ]; then
+    IFS=/ read -r -a components <<< "${prefix%/}"
+    for _ in "${components[@]}"; do
+        up_prefix="${up_prefix}../"
+    done
+fi
+
+while IFS= read -r repo_path; do
+    [ -n "$repo_path" ] || continue
+
+    if [ -n "$prefix" ] && [[ "$repo_path" == "$prefix"* ]]; then
+        printf '%s\n' "${repo_path#"$prefix"}"
+    else
+        printf '%s\n' "${up_prefix}${repo_path}"
+    fi
+done

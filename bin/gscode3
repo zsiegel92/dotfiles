@@ -96,14 +96,15 @@ while true; do
         break
     fi
 
-    abs_path="$repo_root/$selected_filename"
+    abs_path="$PWD/$selected_filename"
     tmpdir=$(mktemp -d -t gscode3.XXXXXX)
     base=$(basename "$selected_filename")
     head_copy="$tmpdir/HEAD__$base"
 
     if git ls-files --error-unmatch -- "$selected_filename" >/dev/null 2>&1; then
+        repo_path=$(git ls-files --full-name --error-unmatch -- "$selected_filename" 2>/dev/null | sed -n '1p')
         # Tracked file: pull HEAD version into a temp file.
-        git show "HEAD:$selected_filename" > "$head_copy" 2>/dev/null || : > "$head_copy"
+        git show "HEAD:$repo_path" > "$head_copy" 2>/dev/null || : > "$head_copy"
     else
         # Untracked: HEAD side is empty.
         : > "$head_copy"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Print modified (tracked) and untracked files, one per line, blank lines removed.
+HELPERS="$(cd "$(dirname "$0")" && pwd)"
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit
+
 {
-    git diff --name-only
-    git ls-files --others --exclude-standard
-} | sed '/^$/d'
+    git -C "$repo_root" diff --name-only
+    git -C "$repo_root" ls-files --others --exclude-standard
+} | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d' | awk '!seen[$0]++'
