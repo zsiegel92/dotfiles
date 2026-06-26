@@ -6,8 +6,12 @@
 """Render select_git_branch rows as branch-tip ancestry views."""
 
 import collections
+import re
 import subprocess
 import sys
+
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+PREVIEW_DECORATION_MARKER = "__GBS_BRANCH_PREVIEW__"
 
 
 def read_branch_rows():
@@ -28,6 +32,86 @@ def read_branch_rows():
         })
 
     return rows
+
+
+def local_branch_names():
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr)
+        sys.exit(exc.returncode)
+
+    return {line for line in result.stdout.splitlines() if line}
+
+
+def strip_ansi(text):
+    return ANSI_ESCAPE_PATTERN.sub("", text)
+
+
+def decoration_branch_names(decorations, branch_names):
+    names = []
+    for decoration in strip_ansi(decorations).strip().split(", "):
+        if decoration.startswith("HEAD -> "):
+            decoration = decoration.removeprefix("HEAD -> ")
+        if decoration in branch_names:
+            names.append(decoration)
+
+    return names
+
+
+def should_print_unnamed_graph_line(line):
+    plain_line = strip_ansi(line).strip()
+    return plain_line and "*" not in plain_line
+
+
+def preview_graph_lines(raw_output, branch_names, include_before_main):
+    for line in raw_output.splitlines():
+        if PREVIEW_DECORATION_MARKER in line:
+            graph_prefix, decorations = line.split(PREVIEW_DECORATION_MARKER, 1)
+            line_branch_names = decoration_branch_names(decorations, branch_names)
+            if line_branch_names:
+                yield graph_prefix + decorations
+
+            if not include_before_main and "main" in line_branch_names:
+                return
+        elif should_print_unnamed_graph_line(line):
+            yield line
+
+
+def print_branch_ancestry_preview(branch, include_before_main=False):
+    branch_names = local_branch_names()
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--graph",
+                "--color=always",
+                "--decorate=short",
+                "--decorate-refs=refs/heads",
+                "--simplify-by-decoration",
+                "--sparse",
+                f"--pretty=format:{PREVIEW_DECORATION_MARKER}%C(auto)%D%C(reset)",
+                branch,
+                "--",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr)
+        sys.exit(exc.returncode)
+
+    for line in preview_graph_lines(result.stdout, branch_names, include_before_main):
+        print(line)
 
 
 def commit_parent_map():
@@ -165,6 +249,122 @@ def branch_topological_order(rows, parent_index_sets):
     return order
 
 
+def children_by_parent(parent_index_sets):
+    children = [set() for _ in parent_index_sets]
+    for child_index, parent_indices in enumerate(parent_index_sets):
+        for parent_index in parent_indices:
+            children[parent_index].add(child_index)
+
+    return children
+
+
+def connected_components(parent_index_sets):
+    children = children_by_parent(parent_index_sets)
+    seen = set()
+    components = []
+
+    for start_index in range(len(parent_index_sets)):
+        if start_index in seen:
+            continue
+
+        component = set()
+        queue = collections.deque([start_index])
+        seen.add(start_index)
+
+        while queue:
+            index = queue.popleft()
+            component.add(index)
+
+            neighbors = set(parent_index_sets[index]) | children[index]
+            for neighbor_index in sorted(neighbors):
+                if neighbor_index not in seen:
+                    seen.add(neighbor_index)
+                    queue.append(neighbor_index)
+
+        components.append(component)
+
+    return sorted(components, key=lambda component: min(component))
+
+
+def branch_reverse_topological_order(component, parent_index_sets, children):
+    remaining_child_counts = {
+        index: len(children[index] & component)
+        for index in component
+    }
+    ready = sorted(index for index, count in remaining_child_counts.items() if count == 0)
+    rendered = set()
+    order = []
+
+    while ready:
+        index = ready.pop(0)
+        if index in rendered:
+            continue
+
+        rendered.add(index)
+        order.append(index)
+
+        for parent_index in parent_index_sets[index]:
+            if parent_index not in component:
+                continue
+
+            remaining_child_counts[parent_index] -= 1
+            if remaining_child_counts[parent_index] == 0:
+                ready.append(parent_index)
+                ready.sort()
+
+    order.extend(index for index in sorted(component) if index not in rendered)
+    return order
+
+
+def branch_graph_node_symbol(parent_count, child_count):
+    if parent_count > 1 and child_count > 1:
+        return "●╋"
+    if parent_count > 1:
+        return "●┬"
+    if child_count > 1:
+        return "●┴"
+
+    return "● "
+
+
+def print_handmade_dag_rows(rows, parent_index_sets):
+    children = children_by_parent(parent_index_sets)
+
+    for component in connected_components(parent_index_sets):
+        order = branch_reverse_topological_order(component, parent_index_sets, children)
+        active_indices = []
+
+        for index in order:
+            if index not in active_indices:
+                active_indices.append(index)
+
+            lane = active_indices.index(index)
+            parent_indices = [
+                parent_index
+                for parent_index in parent_index_sets[index]
+                if parent_index in component
+            ]
+            child_count = len(children[index] & component)
+
+            graph = "".join(
+                branch_graph_node_symbol(len(parent_indices), child_count)
+                if lane_index == lane
+                else "│ "
+                for lane_index in range(len(active_indices))
+            ).rstrip()
+            row = rows[index]
+
+            print("\t".join([row["branch"], f"{graph} {visible_branch(rows, index)}", row["oid"], row["marker"]]))
+
+            existing_indices = set(active_indices[:lane] + active_indices[lane + 1:])
+            new_parent_indices = [
+                parent_index
+                for parent_index in parent_indices
+                if parent_index not in existing_indices
+            ]
+            active_indices = active_indices[:lane] + new_parent_indices + active_indices[lane + 1:]
+
+
 def print_tree_rows(rows, parent_indices):
     children = [[] for _ in rows]
     roots = []
@@ -222,7 +422,17 @@ def print_full_dag_rows(rows, parent_index_sets):
 def main():
     view = "tree"
     if len(sys.argv) > 1:
-        if sys.argv[1] in {"--full-dag", "--dag", "full-dag", "dag"}:
+        if sys.argv[1] == "--preview":
+            include_before_main = len(sys.argv) > 2 and sys.argv[2] == "--all"
+            branch_argument_index = 3 if include_before_main else 2
+            if len(sys.argv) <= branch_argument_index:
+                sys.stderr.write("--preview requires a branch name\n")
+                sys.exit(2)
+            print_branch_ancestry_preview(sys.argv[branch_argument_index], include_before_main)
+            return
+        elif sys.argv[1] in {"--handmade-dag", "--handmade", "handmade-dag", "handmade"}:
+            view = "handmade-dag"
+        elif sys.argv[1] in {"--full-dag", "--dag", "full-dag", "dag"}:
             view = "full-dag"
         elif sys.argv[1] not in {"--tree", "tree"}:
             sys.stderr.write(f"unknown view: {sys.argv[1]}\n")
@@ -233,7 +443,9 @@ def main():
         return
 
     parents_by_commit = commit_parent_map()
-    if view == "full-dag":
+    if view == "handmade-dag":
+        print_handmade_dag_rows(rows, nearest_parent_index_sets(rows, parents_by_commit))
+    elif view == "full-dag":
         print_full_dag_rows(rows, nearest_parent_index_sets(rows, parents_by_commit))
     else:
         print_tree_rows(rows, nearest_parent_indices(rows, parents_by_commit))
