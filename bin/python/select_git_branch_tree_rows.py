@@ -12,6 +12,7 @@ import sys
 
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 PREVIEW_DECORATION_MARKER = "__GBS_BRANCH_PREVIEW__"
+GIT_GRAPH_CONNECTOR_LINE_LIMIT = 2
 
 
 def read_branch_rows():
@@ -88,6 +89,14 @@ def graph_continuation_prefix(graph_prefix):
     return " " * len(strip_ansi(graph_prefix))
 
 
+def print_git_graph_connector_rows(connector_lines):
+    if len(connector_lines) > GIT_GRAPH_CONNECTOR_LINE_LIMIT:
+        return
+
+    for line in connector_lines:
+        print("\t".join(["", line, "", " "]))
+
+
 def print_git_graph_rows():
     branch_names = local_branch_names()
     try:
@@ -114,10 +123,15 @@ def print_git_graph_rows():
         sys.stderr.write(exc.stderr)
         sys.exit(exc.returncode)
 
+    pending_connector_lines = []
     for line in result.stdout.splitlines():
         if PREVIEW_DECORATION_MARKER in line:
             graph_prefix, decorations = line.split(PREVIEW_DECORATION_MARKER, 1)
             line_branch_names = decoration_branch_names(decorations, branch_names)
+            if line_branch_names:
+                print_git_graph_connector_rows(pending_connector_lines)
+                pending_connector_lines = []
+
             for branch_position, branch in enumerate(line_branch_names):
                 if branch_position == 0:
                     display = graph_prefix + branch
@@ -126,7 +140,7 @@ def print_git_graph_rows():
 
                 print("\t".join([branch, display, "", " "]))
         elif should_print_unnamed_graph_line(line):
-            print("\t".join(["", line, "", " "]))
+            pending_connector_lines.append(line)
 
 
 def print_branch_ancestry_preview(branch, include_before_main=False):
