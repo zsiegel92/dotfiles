@@ -2,8 +2,9 @@
 
 autoload -Uz _dotfiles_git_branches
 _arguments \
-  '(-f --full --full-dag --dag -h --handmade --handmade-dag --branch-dag)'{-g,--graph,--tree}'[start in tree view]' \
-  '(-g --graph --tree -h --handmade --handmade-dag --branch-dag)'{-f,--full,--full-dag,--dag}'[start in full DAG view]' \
-  '(-g --graph --tree -f --full --full-dag --dag)'{-h,--handmade,--handmade-dag,--branch-dag}'[start in handmade branch DAG view]' \
+  '(-f --full --full-dag --dag -h --handmade --handmade-dag --branch-dag -y --git-graph --y-graph)'{-g,--graph,--tree}'[start in tree view]' \
+  '(-g --graph --tree -h --handmade --handmade-dag --branch-dag -y --git-graph --y-graph)'{-f,--full,--full-dag,--dag}'[start in full DAG view]' \
+  '(-g --graph --tree -f --full --full-dag --dag -y --git-graph --y-graph)'{-h,--handmade,--handmade-dag,--branch-dag}'[start in handmade branch DAG view]' \
+  '(-g --graph --tree -f --full --full-dag --dag -h --handmade --handmade-dag --branch-dag)'{-y,--git-graph,--y-graph}'[start in all-branch git graph view]' \
   '(-a --all --all-ancestry)'{-a,--all,--all-ancestry}'[preview all named ancestry instead of stopping at main]' \
   '1:branch query:_dotfiles_git_branches'

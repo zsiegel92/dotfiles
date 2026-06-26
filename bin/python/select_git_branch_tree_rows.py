@@ -84,6 +84,51 @@ def preview_graph_lines(raw_output, branch_names, include_before_main):
             yield line
 
 
+def graph_continuation_prefix(graph_prefix):
+    return " " * len(strip_ansi(graph_prefix))
+
+
+def print_git_graph_rows():
+    branch_names = local_branch_names()
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--graph",
+                "--color=always",
+                "--decorate=short",
+                "--decorate-refs=refs/heads",
+                "--simplify-by-decoration",
+                "--sparse",
+                f"--pretty=format:{PREVIEW_DECORATION_MARKER}%C(auto)%D%C(reset)",
+                "--branches",
+                "--",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr)
+        sys.exit(exc.returncode)
+
+    for line in result.stdout.splitlines():
+        if PREVIEW_DECORATION_MARKER in line:
+            graph_prefix, decorations = line.split(PREVIEW_DECORATION_MARKER, 1)
+            line_branch_names = decoration_branch_names(decorations, branch_names)
+            for branch_position, branch in enumerate(line_branch_names):
+                if branch_position == 0:
+                    display = graph_prefix + branch
+                else:
+                    display = graph_continuation_prefix(graph_prefix) + branch
+
+                print("\t".join([branch, display, "", " "]))
+        elif should_print_unnamed_graph_line(line):
+            print("\t".join(["", line, "", " "]))
+
+
 def print_branch_ancestry_preview(branch, include_before_main=False):
     branch_names = local_branch_names()
     try:
@@ -426,9 +471,11 @@ def main():
             include_before_main = len(sys.argv) > 2 and sys.argv[2] == "--all"
             branch_argument_index = 3 if include_before_main else 2
             if len(sys.argv) <= branch_argument_index:
-                sys.stderr.write("--preview requires a branch name\n")
-                sys.exit(2)
+                return
             print_branch_ancestry_preview(sys.argv[branch_argument_index], include_before_main)
+            return
+        elif sys.argv[1] in {"--git-graph", "--y-graph", "git-graph", "y-graph"}:
+            print_git_graph_rows()
             return
         elif sys.argv[1] in {"--handmade-dag", "--handmade", "handmade-dag", "handmade"}:
             view = "handmade-dag"

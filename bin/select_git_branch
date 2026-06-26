@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
-# Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag] [-a|--all-ancestry] [query]
+# Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [query]
 initial_view_mode=list
 initial_preview_scope=main
 
@@ -16,6 +16,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     -h|--handmade|--handmade-dag|--branch-dag)
       initial_view_mode=handmade-dag
+      shift
+      ;;
+    -y|--git-graph|--y-graph)
+      initial_view_mode=git-graph
       shift
       ;;
     -a|--all|--all-ancestry)
@@ -60,6 +64,10 @@ select_git_branch_handmade_dag_rows() {
   uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --handmade-dag
 }
 
+select_git_branch_git_graph_rows() {
+  uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --git-graph
+}
+
 select_git_branch_fzf() {
   local rows="$1"
   local header="$2"
@@ -86,13 +94,14 @@ select_git_branch_fzf() {
     --delimiter=$'\t'
     --with-nth=2
     --accept-nth=1
-    --expect=ctrl-g,ctrl-f,ctrl-h,ctrl-a
+    --expect=ctrl-g,ctrl-f,ctrl-h,ctrl-y,ctrl-a
     --header="$header"
     --bind="alt-up:preview-up,alt-down:preview-down"
+    --bind="enter:transform:[[ -n {1} ]] && echo accept || echo 'change-header:Select a branch row'"
     --preview "$preview_command"
   )
 
-  if [ "$view_mode" = tree ] || [ "$view_mode" = full-dag ] || [ "$view_mode" = handmade-dag ]; then
+  if [ "$view_mode" = tree ] || [ "$view_mode" = full-dag ] || [ "$view_mode" = handmade-dag ] || [ "$view_mode" = git-graph ]; then
     fzf_args+=(--layout=reverse)
   else
     fzf_args+=(--tac)
@@ -109,7 +118,7 @@ select_git_branch_from_selected_row() {
 
   selected_branch=${selected_row%%$'\t'*}
   if [ "$selected_branch" = "$selected_row" ]; then
-    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──*[[:space:]]*//' -e 's/^[[:space:]│*●┬┴╋]*//' -e 's/^[[:space:]]*//' -e 's/^\* //' -e 's/[[:space:]]<-[[:space:]].*$//')
+    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──*[[:space:]]*//' -e 's/^[[:space:]│|\\/*●┬┴╋]*//' -e 's/^[[:space:]]*//' -e 's/^\* //' -e 's/[[:space:]]<-[[:space:]].*$//')
   fi
 
   printf '%s\n' "$selected_branch"
@@ -124,7 +133,7 @@ preview_scope="$initial_preview_scope"
 while true; do
   if [ "$view_mode" = tree ]; then
     active_rows="$tree_branch_rows"
-    header='enter: select branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview'
   elif [ "$view_mode" = full-dag ]; then
     if [ -z "${full_dag_branch_rows+x}" ]; then
       full_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows) || exit
@@ -132,9 +141,9 @@ while true; do
 
     active_rows="$full_dag_branch_rows"
     if [ "$preview_scope" = all ]; then
-      header='enter: select branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-a: stop preview at main, alt-up/down: scroll preview'
+      header='enter: select branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, ctrl-a: stop preview at main, alt-up/down: scroll preview'
     else
-      header='enter: select branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-a: preview all named ancestry, alt-up/down: scroll preview'
+      header='enter: select branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, ctrl-a: preview all named ancestry, alt-up/down: scroll preview'
     fi
   elif [ "$view_mode" = handmade-dag ]; then
     if [ -z "${handmade_dag_branch_rows+x}" ]; then
@@ -142,10 +151,17 @@ while true; do
     fi
 
     active_rows="$handmade_dag_branch_rows"
-    header='enter: select branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, ctrl-y: git graph view, alt-up/down: scroll preview'
+  elif [ "$view_mode" = git-graph ]; then
+    if [ -z "${git_graph_branch_rows+x}" ]; then
+      git_graph_branch_rows=$(select_git_branch_git_graph_rows) || exit
+    fi
+
+    active_rows="$git_graph_branch_rows"
+    header='enter: select branch row, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: list view, alt-up/down: scroll preview'
   else
     active_rows="$branch_rows"
-    header='enter: select branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview'
   fi
 
   selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope")
@@ -164,7 +180,7 @@ while true; do
     selected_row=""
   fi
 
-  if [ -z "$selected_row" ] && [ "$pressed_key" != ctrl-g ] && [ "$pressed_key" != ctrl-f ] && [ "$pressed_key" != ctrl-h ] && [ "$pressed_key" != ctrl-a ]; then
+  if [ -z "$selected_row" ] && [ "$pressed_key" != ctrl-g ] && [ "$pressed_key" != ctrl-f ] && [ "$pressed_key" != ctrl-h ] && [ "$pressed_key" != ctrl-y ] && [ "$pressed_key" != ctrl-a ]; then
     selected_row="$pressed_key"
     pressed_key=
   fi
@@ -196,6 +212,16 @@ while true; do
       view_mode=list
     else
       view_mode=handmade-dag
+      preview_scope=main
+    fi
+    continue
+  fi
+
+  if [ "$pressed_key" = ctrl-y ]; then
+    if [ "$view_mode" = git-graph ]; then
+      view_mode=list
+    else
+      view_mode=git-graph
       preview_scope=main
     fi
     continue

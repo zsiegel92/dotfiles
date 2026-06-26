@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fuzzy-select a branch and merge it into the current branch.
-# Usage: gbm [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag] [-a|--all-ancestry] [query]
+# Usage: gbm [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [query]
 branch=$(select_git_branch "$@")
 if [ -n "$branch" ]; then
     echo "git merge $branch"
