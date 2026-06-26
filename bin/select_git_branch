@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
-# Usage: select_git_branch [-g|--graph|--tree] [query]
+# Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag] [query]
 initial_view_mode=list
 
 case "$1" in
   -g|--graph|--tree)
     initial_view_mode=tree
+    shift
+    ;;
+  -f|--full|--full-dag|--dag)
+    initial_view_mode=full-dag
     shift
     ;;
 esac
@@ -30,6 +34,10 @@ select_git_branch_tree_rows() {
   uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS"
 }
 
+select_git_branch_full_dag_rows() {
+  uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --full-dag
+}
+
 select_git_branch_fzf() {
   local rows="$1"
   local header="$2"
@@ -47,14 +55,14 @@ select_git_branch_fzf() {
     --delimiter=$'\t'
     --with-nth=2
     --accept-nth=1
-    --expect=ctrl-g
+    --expect=ctrl-g,ctrl-f
     --preview-window=up:3
     --header="$header"
     --bind="alt-up:preview-up,alt-down:preview-down"
     --preview 'git log --oneline --graph --decorate --color=always --date=short --pretty=format:"%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset)[%an]" {1} --'
   )
 
-  if [ "$view_mode" = tree ]; then
+  if [ "$view_mode" = tree ] || [ "$view_mode" = full-dag ]; then
     fzf_args+=(--layout=reverse)
   else
     fzf_args+=(--tac)
@@ -69,7 +77,7 @@ select_git_branch_from_selected_row() {
 
   selected_branch=${selected_row%%$'\t'*}
   if [ "$selected_branch" = "$selected_row" ]; then
-    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──*[[:space:]]*//' -e 's/^[[:space:]]*//' -e 's/^\* //')
+    selected_branch=$(printf '%s\n' "$selected_branch" | sed -e 's/^[[:space:]│]*[├└]──*[[:space:]]*//' -e 's/^[[:space:]]*//' -e 's/^\* //' -e 's/[[:space:]]<-[[:space:]].*$//')
   fi
 
   printf '%s\n' "$selected_branch"
@@ -83,10 +91,17 @@ current_query="$query"
 while true; do
   if [ "$view_mode" = tree ]; then
     active_rows="$tree_branch_rows"
-    header='enter: select branch, ctrl-g: list view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: list view, ctrl-f: full DAG view, alt-up/down: scroll preview'
+  elif [ "$view_mode" = full-dag ]; then
+    if [ -z "${full_dag_branch_rows+x}" ]; then
+      full_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows) || exit
+    fi
+
+    active_rows="$full_dag_branch_rows"
+    header='enter: select branch, ctrl-g: tree view, ctrl-f: list view, alt-up/down: scroll preview'
   else
     active_rows="$branch_rows"
-    header='enter: select branch, ctrl-g: graph view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-g: tree view, ctrl-f: full DAG view, alt-up/down: scroll preview'
   fi
 
   selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query")
@@ -113,8 +128,19 @@ while true; do
   if [ "$pressed_key" = ctrl-g ]; then
     if [ "$view_mode" = tree ]; then
       view_mode=list
+    elif [ "$view_mode" = full-dag ]; then
+      view_mode=tree
     else
       view_mode=tree
+    fi
+    continue
+  fi
+
+  if [ "$pressed_key" = ctrl-f ]; then
+    if [ "$view_mode" = full-dag ]; then
+      view_mode=list
+    else
+      view_mode=full-dag
     fi
     continue
   fi
