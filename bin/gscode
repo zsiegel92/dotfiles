@@ -39,7 +39,7 @@ while true; do
     --wrap \
     --ansi \
     --header $'enter: open in code · ctrl-d: code --diff (HEAD vs working)' \
-    --bind alt-up:preview-up,alt-down:preview-down \
+    --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down \
     --bind "ctrl-d:execute(\"$SELF\" --diff-file {})" \
     --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')
     if [ -n "$selected_filename" ]; then
