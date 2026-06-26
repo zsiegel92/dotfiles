@@ -144,6 +144,10 @@ def print_git_graph_rows():
 
 
 def print_branch_ancestry_preview(branch, include_before_main=False):
+    if not branch:
+        print("select a branch to see its ancestry")
+        return
+
     branch_names = local_branch_names()
     try:
         result = subprocess.run(
