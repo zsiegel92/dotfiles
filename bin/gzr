@@ -2,8 +2,10 @@
 # GitLab fuZzy Repo selector: pick a local repo with open MRs involving you, then run gzm there.
 case "$1" in
   -h|--help)
-    echo "Usage: gzr"
+    echo "Usage: gzr [fzgl-options]"
     echo "Fuzzy-pick a local GitLab repo with open MRs involving you, then run gzm in that repo."
+    echo "Options:"
+    echo "  -g, --graph        start in graph view after selecting a repo"
     echo "Environment:"
     echo "  GZR_REPO_ROOTS      colon-separated roots to scan (default: ~/code)"
     echo "  GZR_FIND_MAX_DEPTH  find depth below each root (default: 4)"
@@ -125,4 +127,4 @@ if [ -z "$repo_dir" ]; then
 fi
 
 cd "$repo_dir" || exit
-fzgl
+fzgl "$@"

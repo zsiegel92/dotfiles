@@ -1,6 +1,60 @@
 #!/usr/bin/env bash
 # Repeatedly fuzzy-pick a GitLab MR (from `gli`) and open it in the browser.
 # Accepts the same flags as gli (e.g. -r, --all, --done).
+fzgl_help() {
+  cat <<'EOF'
+Usage: fzgl [-g] [gli-filter]
+
+Options:
+  -g, --graph  start in graph view
+  -h, --help   show this help
+
+MR filters passed through to gli:
+  -a, --all    all open MRs in the current GitLab project
+  -r           open MRs requesting your review
+  -d, --done   closed or merged MRs involving you
+
+Keyboard shortcuts:
+  enter        open highlighted MR in GitLab
+  ctrl-w       open highlighted MR in GitLab without leaving fzf
+  ctrl-b       copy source branch
+  ctrl-g       toggle list and graph views
+  alt-up       scroll preview up one line
+  alt-down     scroll preview down one line
+  alt-u        scroll preview up one page
+  alt-d        scroll preview down one page
+  page-up      scroll preview up one page
+  page-down    scroll preview down one page
+EOF
+}
+
+initial_view_mode=list
+gli_args=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -g|--graph)
+      initial_view_mode=tree
+      shift
+      ;;
+    -h|--help)
+      fzgl_help
+      exit
+      ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do
+        gli_args+=("$1")
+        shift
+      done
+      ;;
+    *)
+      gli_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
 gls_require_command fzf || exit
 
 fzgl_tree_rows() {
@@ -30,6 +84,11 @@ fzgl_tree_rows() {
       children[parent_branch, child_count[parent_branch]] = child_branch
     }
 
+    function approval_decoration(status) {
+      if (status == "") return ""
+      return " " sprintf("%c[32m%s%c[0m", 27, status, 27)
+    }
+
     function render_node(branch, prefix, is_last, depth, row_index, display, i, child_branch, next_prefix, connector) {
       if (rendered[branch]) return
       rendered[branch] = 1
@@ -46,6 +105,7 @@ fzgl_tree_rows() {
         next_prefix = prefix (is_last ? "   " : "│  ")
       }
 
+      display = display approval_decoration(approval_status[row_index])
       print iid[row_index], display, branch_names[row_index], actor_names[row_index], title[row_index], approval_status[row_index]
 
       for (i = 1; i <= child_count[branch]; i++) {
@@ -115,7 +175,7 @@ fzgl_select_mr() {
     --with-nth=2
     --expect=ctrl-g
     --header="$header"
-    --bind="ctrl-w:execute-silent(glab mr view {1} --web >/dev/null 2>&1 &),ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
+    --bind="ctrl-w:execute-silent(sh -c 'mr_iid=\$1; branch=\${2%%->*}; target=\${mr_iid:-\$branch}; [ -n \"\$target\" ] && glab mr view \"\$target\" --web >/dev/null 2>&1 &' sh {1} {3}),ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
   )
 
   if [ "$view_mode" = tree ]; then
@@ -126,11 +186,11 @@ fzgl_select_mr() {
 }
 
 current_user=$(gls_gitlab_username 2>/dev/null || true)
-mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "$@") || exit
+mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "${gli_args[@]}") || exit
 tree_mrs=$(printf '%s\n' "$mrs" | fzgl_tree_rows) || exit
 
 GLS_VIEW_MR_USING_CACHE_COMMAND='gls_fzf_preview_mr {1} {5} {3} {4} {6}'
-view_mode=list
+view_mode=$initial_view_mode
 
 while true; do
   if [ "$view_mode" = tree ]; then

@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
 # GitLab fuZzy Mr viewer: repeatedly pick MRs from `gli` and open them in the browser.
 case "$1" in
+  -h|--help)
+    cat <<'EOF'
+Usage: gzm [-g] [gli-filter]
+       gzm -A [-g] [gli-filter]
+
+Options:
+  -g, --graph  start in graph view
+  -A           pick a local GitLab repo first, then show its MRs
+  -h, --help   show this help
+
+MR filters passed through to gli:
+  -a, --all    all open MRs in the current GitLab project
+  -r           open MRs requesting your review
+  -d, --done   closed or merged MRs involving you
+
+Keyboard shortcuts:
+  enter        open highlighted MR in GitLab
+  ctrl-w       open highlighted MR in GitLab without leaving fzf
+  ctrl-b       copy source branch
+  ctrl-g       toggle list and graph views
+  alt-up       scroll preview up one line
+  alt-down     scroll preview down one line
+  alt-u        scroll preview up one page
+  alt-d        scroll preview down one page
+  page-up      scroll preview up one page
+  page-down    scroll preview down one page
+EOF
+    exit
+    ;;
   -A)
     shift
     exec gzr "$@"
