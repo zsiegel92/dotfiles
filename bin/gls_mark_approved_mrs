@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Mark input GitLab MRs that also appear in approved-by-any filtered queries.
+# Usage: gls_mark_approved_mrs <query-string>...
+base=$(jq -c '.') || exit
+
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' "$base"
+  exit
+fi
+
+fetch_approved_mrs() {
+  query="$1"
+
+  gls_api_mrs "${query}&approved_by_ids[]=Any" 2>/dev/null || gls_api_mrs "${query}&approved_by_ids=Any" 2>/dev/null || true
+}
+
+{
+  printf '%s\n' "$base"
+  for query in "$@"; do
+    fetch_approved_mrs "$query" | jq 'map(. + {_gls_has_approval: true})' || true
+  done
+} | jq -s '
+  add // []
+  | group_by(.id // .iid)
+  | map(reduce .[] as $mr ({}; . * $mr))
+  | sort_by(.updated_at // "")
+  | reverse
+'

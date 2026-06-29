@@ -4,9 +4,10 @@ mr_iid="$1"
 title="$2"
 branch_names="$3"
 actor_names="$4"
+approval_status="$5"
 
 if [ -z "$mr_iid" ]; then
-  echo "Usage: gls_fzf_preview_mr <mr-iid> <title> <source->target> <author->reviewers>" >&2
+  echo "Usage: gls_fzf_preview_mr <mr-iid> <title> <source->target> <author->reviewers> [approval-status]" >&2
   exit 2
 fi
 
@@ -15,6 +16,9 @@ statfile="/tmp/fzgl_mr_diffstat_v3_${mr_iid}.txt"
 branch_label=${branch_names/->/ -> }
 
 printf '%s\n' "$title"
+if [ -n "$approval_status" ]; then
+  printf '\033[32m%s\033[0m\n' "$approval_status"
+fi
 printf '%s\n' "$branch_label"
 printf '%s\n' "$actor_names"
 

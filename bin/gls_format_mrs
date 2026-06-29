@@ -2,6 +2,7 @@
 # Format a JSON array of GitLab MRs (from stdin) into one colored line each.
 exec jq -r '
   def red: "[31m" + . + "[0m";
+  def green: "[32m" + . + "[0m";
   def gray: "[90m" + . + "[0m";
   def magenta: "[35m" + . + "[0m";
   def merge_state:
@@ -11,6 +12,10 @@ exec jq -r '
       else
         " " + ($status | ascii_upcase | red)
       end;
+  def approval_text:
+    if (._gls_has_approval // false) then "APPROVED" else "" end;
+  def approval_state:
+    if approval_text == "" then "" else " " + (approval_text | green) end;
   def draft_state:
     if (.draft // false) then " " + ("DRAFT" | gray) else "" end;
   def mr_state:
@@ -39,14 +44,14 @@ exec jq -r '
     env.GLS_CURRENT_USER == "" or author_name != env.GLS_CURRENT_USER;
   def visible_line:
     if show_actor_in_list then
-      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names) (\(actor_names)): \(title_text) - \(.updated_at)"
+      "\(.iid)\(merge_state)\(approval_state)\(draft_state)\(mr_state) \(branch_names) (\(actor_names)): \(title_text) - \(.updated_at)"
     else
-      "\(.iid)\(merge_state)\(draft_state)\(mr_state) \(branch_names): \(title_text) - \(.updated_at)"
+      "\(.iid)\(merge_state)\(approval_state)\(draft_state)\(mr_state) \(branch_names): \(title_text) - \(.updated_at)"
     end;
 
   .[] |
   if env.GLS_FZF_FORMAT == "1" then
-    "\(.iid)\t\(visible_line)\t\(branch_names)\t\(actor_names)\t\(title_text)"
+    "\(.iid)\t\(visible_line)\t\(branch_names)\t\(actor_names)\t\(title_text)\t\(approval_text)"
   else
     visible_line
   end

@@ -46,7 +46,7 @@ fzgl_tree_rows() {
         next_prefix = prefix (is_last ? "   " : "│  ")
       }
 
-      print iid[row_index], display, branch_names[row_index], actor_names[row_index], title[row_index]
+      print iid[row_index], display, branch_names[row_index], actor_names[row_index], title[row_index], approval_status[row_index]
 
       for (i = 1; i <= child_count[branch]; i++) {
         child_branch = children[branch, i]
@@ -69,6 +69,7 @@ fzgl_tree_rows() {
         branch_names[row_count] = $3
         actor_names[row_count] = $4
         title[row_count] = $5
+        approval_status[row_count] = $6
         add_child(target, source)
       }
     }
@@ -114,7 +115,7 @@ fzgl_select_mr() {
     --with-nth=2
     --expect=ctrl-g
     --header="$header"
-    --bind="ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
+    --bind="ctrl-w:execute-silent(glab mr view {1} --web >/dev/null 2>&1 &),ctrl-b:execute-silent(sh -c 'branch=\${1%%->*}; printf %s \"\$branch\" | pbcopy' sh {3}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
   )
 
   if [ "$view_mode" = tree ]; then
@@ -128,16 +129,16 @@ current_user=$(gls_gitlab_username 2>/dev/null || true)
 mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "$@") || exit
 tree_mrs=$(printf '%s\n' "$mrs" | fzgl_tree_rows) || exit
 
-GLS_VIEW_MR_USING_CACHE_COMMAND='gls_fzf_preview_mr {1} {5} {3} {4}'
+GLS_VIEW_MR_USING_CACHE_COMMAND='gls_fzf_preview_mr {1} {5} {3} {4} {6}'
 view_mode=list
 
 while true; do
   if [ "$view_mode" = tree ]; then
     active_mrs="$tree_mrs"
-    header='enter: open MR, ctrl-b: copy branch, ctrl-g: list view, alt-up/down: scroll preview'
+    header='enter: open MR, ctrl-w: open in GitLab, ctrl-b: copy branch, ctrl-g: list view, alt-up/down: scroll preview'
   else
     active_mrs="$mrs"
-    header='enter: open MR, ctrl-b: copy branch, ctrl-g: tree view, alt-up/down: scroll preview'
+    header='enter: open MR, ctrl-w: open in GitLab, ctrl-b: copy branch, ctrl-g: tree view, alt-up/down: scroll preview'
   fi
 
   selected=$(fzgl_select_mr "$active_mrs" "$header" "$view_mode")

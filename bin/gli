@@ -18,21 +18,46 @@ esac
 gls_require_command glab || exit
 gls_require_command jq || exit
 
+format_mrs() {
+  gls_mark_approved_mrs "$@" | gls_format_mrs
+}
+
+format_involved_mrs() {
+  local state="$1"
+  local username="$2"
+  local encoded_username
+  encoded_username=$(gls_urlencode "$username") || exit
+
+  gls_involved_mrs "$state" "$username" | format_mrs \
+    "state=$state&author_username=$encoded_username" \
+    "state=$state&assignee_username=$encoded_username" \
+    "state=$state&reviewer_username=$encoded_username"
+}
+
 case "$1" in
   --all|-a)
-    gls_api_mrs "state=opened" | gls_format_mrs
+    query="state=opened"
+    gls_api_mrs "$query" | format_mrs "$query"
     ;;
   -r)
     username=$(gls_gitlab_username) || exit
     encoded_username=$(gls_urlencode "$username") || exit
-    gls_api_mrs "state=opened&reviewer_username=$encoded_username" | gls_format_mrs
+    query="state=opened&reviewer_username=$encoded_username"
+    gls_api_mrs "$query" | format_mrs "$query"
     ;;
   -d|--done)
     username=$(gls_gitlab_username) || exit
-    gls_done_mrs "$username" | gls_format_mrs
+    encoded_username=$(gls_urlencode "$username") || exit
+    gls_done_mrs "$username" | format_mrs \
+      "state=closed&author_username=$encoded_username" \
+      "state=closed&assignee_username=$encoded_username" \
+      "state=closed&reviewer_username=$encoded_username" \
+      "state=merged&author_username=$encoded_username" \
+      "state=merged&assignee_username=$encoded_username" \
+      "state=merged&reviewer_username=$encoded_username"
     ;;
   *)
     username=$(gls_gitlab_username) || exit
-    gls_involved_mrs opened "$username" | gls_format_mrs
+    format_involved_mrs opened "$username"
     ;;
 esac
