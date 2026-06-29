@@ -6,27 +6,127 @@
 # Usage: fzrecent [-d depth] [-f] [dir=.]
 #   -d depth  limit recursion to <depth> directory levels (default: infinite)
 #   -f        only files in the immediate directory (equivalent to -d 1)
+usage() {
+  echo "usage: fzrecent [-d depth] [-f] [dir=.]" >&2
+}
+
 depth=""
+
+list_recent_files() {
+  # Per file emit: epoch<TAB>Myyyy-MM-dd<TAB>fullpath. Sort newest-first, drop the
+  # epoch sort key, then add a display column with the "<dir>/" prefix stripped:
+  #   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
+  # fzf shows the date + display name, but returns (and previews) the full path.
+  find -H "$dir" ${depth:+-maxdepth "$depth"} -type f -print0 \
+    | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
+    | sort -rn \
+    | cut -f2- \
+    | awk -F'\t' -v pfx="${dir%/}/" 'BEGIN{OFS="\t"} { disp=$2; sub("^" pfx, "", disp); print $1, disp, $2 }'
+}
+
+content_filter_recent_files() {
+  local filter_query="$1"
+
+  list_recent_files | perl -F'\t' -lane '
+    BEGIN {
+      $query = shift @ARGV;
+      @terms = grep { length } split /\s+/, lc($query // "");
+      $max_term_len = 0;
+      for $term (@terms) {
+        $max_term_len = length($term) if length($term) > $max_term_len;
+      }
+    }
+
+    if (!@terms) {
+      print;
+      next;
+    }
+
+    ($date, $display, $path) = @F;
+    $haystack = lc(join("\t", $display // "", $path // ""));
+    @missing = grep { index($haystack, $_) < 0 } @terms;
+
+    if (@missing && defined($path) && open($fh, "<:raw", $path)) {
+      $tail = "";
+      while (@missing && read($fh, $chunk, 65536)) {
+        $text = lc($tail . $chunk);
+        @missing = grep { index($text, $_) < 0 } @missing;
+        $tail = $max_term_len > 1 ? substr($chunk, -($max_term_len - 1)) : "";
+      }
+      close($fh);
+    }
+
+    print unless @missing;
+  ' "$filter_query"
+}
+
+if [ "$1" = "--content-filter" ]; then
+  shift
+  dir="${FZRECENT_DIR:-.}"
+  depth="${FZRECENT_DEPTH:-}"
+  content_filter_recent_files "$1"
+  exit
+fi
+
 while getopts "d:f" opt; do
   case "$opt" in
     d) depth="$OPTARG" ;;
     f) depth=1 ;;
-    *) echo "usage: fzrecent [-d depth] [-f] [dir=.]" >&2; exit 1 ;;
+    *) usage; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
 dir="${1:-.}"
 
-# Per file emit: epoch<TAB>Myyyy-MM-dd<TAB>fullpath. Sort newest-first, drop the
-# epoch sort key, then add a display column with the "<dir>/" prefix stripped:
-#   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
-# fzf shows the date + display name, but returns (and previews) the full path.
-find -H "$dir" ${depth:+-maxdepth "$depth"} -type f -print0 \
-  | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
-  | sort -rn \
-  | cut -f2- \
-  | awk -F'\t' -v pfx="${dir%/}/" 'BEGIN{OFS="\t"} { disp=$2; sub("^" pfx, "", disp); print $1, disp, $2 }' \
-  | fzf \
+script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+query=""
+mode="filename"
+selected_path=""
+toggle_marker="__fzrecent_toggle_content_search__"
+preview_command='if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain --wrap=character ${FZF_PREVIEW_COLUMNS:+--terminal-width="$FZF_PREVIEW_COLUMNS"} -- {3}; else cat -- {3}; fi'
+scroll_bindings='alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down'
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
+parse_picker_output() {
+  local picker_output="$1"
+  local second_line third_line selected_line
+
+  query=$(printf '%s\n' "$picker_output" | sed -n '1p')
+  second_line=$(printf '%s\n' "$picker_output" | sed -n '2p')
+  third_line=$(printf '%s\n' "$picker_output" | sed -n '3p')
+
+  if [ "$second_line" = "$toggle_marker" ]; then
+    return 2
+  fi
+
+  if [ -n "$third_line" ] || [ -z "$second_line" ]; then
+    selected_line="$third_line"
+  else
+    selected_line="$second_line"
+  fi
+
+  if [ -z "$selected_line" ]; then
+    return 1
+  fi
+
+  selected_path=$(printf '%s\n' "$selected_line" | awk -F'\t' '{print $3}')
+  [ -n "$selected_path" ]
+}
+
+run_picker() {
+  local picker_output picker_status parse_status filter_command header prompt
+
+  if [ "$mode" = "content" ]; then
+    header='enter: select, ctrl-a: filename search, alt-up/down and page-up/down: scroll preview'
+    prompt='text> '
+    filter_command="FZRECENT_DIR=$(shell_quote "$dir") FZRECENT_DEPTH=$(shell_quote "$depth") $(shell_quote "$script_path") --content-filter"
+    picker_output=$(content_filter_recent_files "$query" | fzf \
+      --disabled \
+      --query="$query" \
+      --print-query \
       --no-sort \
       --no-mouse \
       --height 90% \
@@ -34,7 +134,66 @@ find -H "$dir" ${depth:+-maxdepth "$depth"} -type f -print0 \
       --delimiter='\t' \
       --tabstop=1 \
       --with-nth=1,2 \
-      --accept-nth=3 \
+      --prompt="$prompt" \
+      --header="$header" \
       --preview-window=right:60% \
-      --bind alt-up:preview-up,alt-down:preview-down \
-      --preview 'if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain --wrap=character ${FZF_PREVIEW_COLUMNS:+--terminal-width="$FZF_PREVIEW_COLUMNS"} -- {3}; else cat -- {3}; fi'
+      --bind "$scroll_bindings" \
+      --bind "ctrl-a:print($toggle_marker)+accept" \
+      --bind "change:reload:$filter_command {q}" \
+      --preview "$preview_command")
+  else
+    header='enter: select, ctrl-a: search file text, alt-up/down and page-up/down: scroll preview'
+    prompt='files> '
+    picker_output=$(list_recent_files | fzf \
+      --query="$query" \
+      --print-query \
+      --no-sort \
+      --no-mouse \
+      --height 90% \
+      --ansi \
+      --delimiter='\t' \
+      --tabstop=1 \
+      --with-nth=1,2 \
+      --prompt="$prompt" \
+      --header="$header" \
+      --preview-window=right:60% \
+      --bind "$scroll_bindings" \
+      --bind "ctrl-a:print($toggle_marker)+accept" \
+      --preview "$preview_command")
+  fi
+  picker_status=$?
+
+  parse_picker_output "$picker_output"
+  parse_status=$?
+  if [ "$parse_status" -eq 0 ] || [ "$parse_status" -eq 2 ]; then
+    return "$parse_status"
+  fi
+
+  if [ "$picker_status" -ne 0 ]; then
+    return "$picker_status"
+  fi
+
+  return "$parse_status"
+}
+
+while true; do
+  run_picker
+  picker_status=$?
+
+  case "$picker_status" in
+    0)
+      printf '%s\n' "$selected_path"
+      exit 0
+      ;;
+    2)
+      if [ "$mode" = "content" ]; then
+        mode="filename"
+      else
+        mode="content"
+      fi
+      ;;
+    *)
+      exit "$picker_status"
+      ;;
+  esac
+done
