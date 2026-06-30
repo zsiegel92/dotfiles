@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Print the non-interactive branch DAG view used by gbs -f.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TREE_ROWS="$SCRIPT_DIR/python/select_git_branch_tree_rows.py"
+
+git branch --format='%(HEAD)%09%(refname:short)%09%(objectname)' |
+  awk -F '\t' 'BEGIN { OFS = "\t" } { marker = $1 == "*" ? "*" : " "; print $2, marker " " $2, $3, marker }' |
+  uv run --script "$TREE_ROWS" --full-dag |
+  cut -f2

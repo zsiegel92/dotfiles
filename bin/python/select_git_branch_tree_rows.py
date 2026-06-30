@@ -35,6 +35,34 @@ def read_branch_rows():
     return rows
 
 
+def local_branch_rows():
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)%09%(objectname)"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr)
+        sys.exit(exc.returncode)
+
+    rows = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+
+        rows.append({
+            "branch": parts[0],
+            "oid": parts[1],
+            "marker": " ",
+        })
+
+    return rows
+
+
 def local_branch_names():
     try:
         result = subprocess.run(
@@ -175,6 +203,58 @@ def print_branch_ancestry_preview(branch, include_before_main=False):
 
     for line in preview_graph_lines(result.stdout, branch_names, include_before_main):
         print(line)
+
+
+def print_branch_parent_diff(parent_branch, branch):
+    print(f"{parent_branch}..{branch}")
+    result = subprocess.run(
+        ["git", "diff", "--name-status", "--color=always", f"{parent_branch}..{branch}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        sys.exit(result.returncode)
+
+    output = result.stdout.rstrip("\n")
+    if output:
+        print(output)
+    else:
+        print("(no file changes)")
+
+
+def print_branch_parent_diff_preview(branch, view):
+    if not branch:
+        print("select a branch to see files changed vs its parent")
+        return
+
+    rows = local_branch_rows()
+    selected_index = next(
+        (index for index, row in enumerate(rows) if row["branch"] == branch),
+        None,
+    )
+    if selected_index is None:
+        print(f"branch not found: {branch}")
+        return
+
+    parents_by_commit = commit_parent_map()
+    if view == "full-dag":
+        parent_indices = nearest_parent_index_sets(rows, parents_by_commit)[selected_index]
+    else:
+        parent_index = nearest_parent_indices(rows, parents_by_commit)[selected_index]
+        parent_indices = [] if parent_index is None else [parent_index]
+
+    if not parent_indices:
+        print(f"no parent branch found for {branch}")
+        return
+
+    for parent_position, parent_index in enumerate(parent_indices):
+        if parent_position > 0:
+            print()
+
+        print_branch_parent_diff(rows[parent_index]["branch"], branch)
 
 
 def commit_parent_map():
@@ -491,6 +571,20 @@ def main():
             if len(sys.argv) <= branch_argument_index:
                 return
             print_branch_ancestry_preview(sys.argv[branch_argument_index], include_before_main)
+            return
+        elif sys.argv[1] == "--diff-preview":
+            preview_view = "tree"
+            branch_argument_index = 2
+            if len(sys.argv) > 2 and sys.argv[2] in {"--tree", "tree"}:
+                branch_argument_index = 3
+            elif len(sys.argv) > 2 and sys.argv[2] in {"--full-dag", "--dag", "full-dag", "dag"}:
+                preview_view = "full-dag"
+                branch_argument_index = 3
+
+            if len(sys.argv) <= branch_argument_index:
+                return
+
+            print_branch_parent_diff_preview(sys.argv[branch_argument_index], preview_view)
             return
         elif sys.argv[1] in {"--git-graph", "--y-graph", "git-graph", "y-graph"}:
             print_git_graph_rows()

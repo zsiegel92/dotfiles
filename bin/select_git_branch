@@ -76,7 +76,11 @@ select_git_branch_fzf() {
   local preview_scope="$5"
   local preview_command
 
-  if [ "$preview_scope" = all ]; then
+  if [ "$view_mode" = tree ]; then
+    preview_command="'$SELECT_GIT_BRANCH_TREE_ROWS' --diff-preview --tree {1}"
+  elif [ "$view_mode" = full-dag ]; then
+    preview_command="'$SELECT_GIT_BRANCH_TREE_ROWS' --diff-preview --full-dag {1}"
+  elif [ "$preview_scope" = all ]; then
     preview_command="'$SELECT_GIT_BRANCH_TREE_ROWS' --preview --all {1}"
   else
     preview_command="'$SELECT_GIT_BRANCH_TREE_ROWS' --preview {1}"
@@ -94,7 +98,7 @@ select_git_branch_fzf() {
     --delimiter=$'\t'
     --with-nth=2
     --accept-nth=1
-    --expect=ctrl-g,ctrl-f,ctrl-h,ctrl-y,ctrl-a
+    --expect=ctrl-g,ctrl-f,ctrl-h,ctrl-y
     --header="$header"
     --bind="ctrl-w:execute-silent(sh -c 'branch=\$1; [ -n \"\$branch\" ] && glab mr view \"\$branch\" --web >/dev/null 2>&1 &' sh {1})"
     --bind="ctrl-b:execute-silent(sh -c 'if [ -n \"\$1\" ]; then printf \"%s\" \"\$1\" | pbcopy; fi' sh {1})"
@@ -135,18 +139,14 @@ preview_scope="$initial_preview_scope"
 while true; do
   if [ "$view_mode" = tree ]; then
     active_rows="$tree_branch_rows"
-    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview'
+    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent'
   elif [ "$view_mode" = full-dag ]; then
     if [ -z "${full_dag_branch_rows+x}" ]; then
       full_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows) || exit
     fi
 
     active_rows="$full_dag_branch_rows"
-    if [ "$preview_scope" = all ]; then
-      header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, ctrl-a: stop preview at main, alt-up/down: scroll preview'
-    else
-      header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, ctrl-a: preview all named ancestry, alt-up/down: scroll preview'
-    fi
+    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent'
   elif [ "$view_mode" = handmade-dag ]; then
     if [ -z "${handmade_dag_branch_rows+x}" ]; then
       handmade_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_handmade_dag_rows) || exit
@@ -182,7 +182,7 @@ while true; do
     selected_row=""
   fi
 
-  if [ -z "$selected_row" ] && [ "$pressed_key" != ctrl-g ] && [ "$pressed_key" != ctrl-f ] && [ "$pressed_key" != ctrl-h ] && [ "$pressed_key" != ctrl-y ] && [ "$pressed_key" != ctrl-a ]; then
+  if [ -z "$selected_row" ] && [ "$pressed_key" != ctrl-g ] && [ "$pressed_key" != ctrl-f ] && [ "$pressed_key" != ctrl-h ] && [ "$pressed_key" != ctrl-y ]; then
     selected_row="$pressed_key"
     pressed_key=
   fi
@@ -225,17 +225,6 @@ while true; do
     else
       view_mode=git-graph
       preview_scope=main
-    fi
-    continue
-  fi
-
-  if [ "$pressed_key" = ctrl-a ]; then
-    if [ "$view_mode" = full-dag ]; then
-      if [ "$preview_scope" = all ]; then
-        preview_scope=main
-      else
-        preview_scope=all
-      fi
     fi
     continue
   fi
