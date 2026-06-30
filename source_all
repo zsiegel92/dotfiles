@@ -15,6 +15,11 @@ for dir in "$DOTFILES_DIR/bin" "$DOTFILES_DIR/bin/aliases"; do
 done
 
 if [ -n "${ZSH_VERSION:-}" ]; then
+  for function_file in "$DOTFILES_DIR"/zsh/functions/*.zsh(N); do
+    source "$function_file"
+  done
+  unset function_file
+
   completion_dir="$DOTFILES_DIR/zsh/completions"
   case " ${fpath[*]} " in
     *" $completion_dir "*) ;;
