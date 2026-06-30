@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for git-branch-tree-view.
+exec git-branch-tree-view "$@"

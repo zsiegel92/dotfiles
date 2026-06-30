@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for git-branch-dag-view.
+exec git-branch-dag-view "$@"
