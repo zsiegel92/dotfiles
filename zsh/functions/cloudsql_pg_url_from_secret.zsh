@@ -8,6 +8,7 @@ cloudsql_pg_url_from_secret() {
   local region="us-east4"
   local log_file="/tmp/cloud-sql-proxy-${db_instance}-${port}.log"
   local pid_file="/tmp/cloud-sql-proxy-${db_instance}-${port}.pid"
+  local proxy_command="cloud-sql-proxy ${project}:${region}:${db_instance} --address 127.0.0.1 --port ${port}"
   local proxy_already_running=0
 
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -25,6 +26,8 @@ cloudsql_pg_url_from_secret() {
     fi
   fi
 
+  echo "DOING \`${proxy_command}\`"
+
   local proxy_pid=""
   if [[ "$proxy_already_running" -eq 0 ]]; then
     cloud-sql-proxy "${project}:${region}:${db_instance}" \
@@ -34,7 +37,6 @@ cloudsql_pg_url_from_secret() {
 
     proxy_pid=$!
     sleep 1
-    echo "DOING \`cloud-sql-proxy ${project}:${region}:${db_instance} --port ${port}\`"
     if ! kill -0 "$proxy_pid" 2>/dev/null; then
       echo "Cloud SQL proxy failed to start for ${db_instance} on port ${port}."
       echo "Logs:"
