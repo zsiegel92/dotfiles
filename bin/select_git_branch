@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
 # Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [query]
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$SCRIPT_DIR/$(basename "$0")"
+
+if [ "$1" = "--switch-stay-branch" ]; then
+  branch="$2"
+  if [ -n "$branch" ]; then
+    echo "git checkout $branch"
+    git checkout "$branch"
+  fi
+  exit
+fi
+
 initial_view_mode=list
 initial_preview_scope=main
+enable_switch_stay=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --switch-stay)
+      enable_switch_stay=1
+      shift
+      ;;
     -g|--graph|--tree)
       initial_view_mode=tree
       shift
@@ -37,7 +54,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 query="$*"
-SELECT_GIT_BRANCH_TREE_ROWS="$(cd "$(dirname "$0")" && pwd)/python/select_git_branch_tree_rows.py"
+SELECT_GIT_BRANCH_TREE_ROWS="$SCRIPT_DIR/python/select_git_branch_tree_rows.py"
 
 select_git_branch_rows() {
   git branch --format='%(HEAD)%09%(refname:short)%09%(objectname)' | awk -F '\t' '
@@ -74,6 +91,7 @@ select_git_branch_fzf() {
   local view_mode="$3"
   local current_query="$4"
   local preview_scope="$5"
+  local switch_stay_bind="$6"
   local preview_command
 
   if [ "$view_mode" = tree ]; then
@@ -107,6 +125,10 @@ select_git_branch_fzf() {
     --preview "$preview_command"
   )
 
+  if [ -n "$switch_stay_bind" ]; then
+    fzf_args+=(--bind="$switch_stay_bind")
+  fi
+
   if [ "$view_mode" = tree ] || [ "$view_mode" = full-dag ] || [ "$view_mode" = handmade-dag ] || [ "$view_mode" = git-graph ]; then
     fzf_args+=(--layout=reverse)
   else
@@ -135,38 +157,62 @@ tree_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_tree_rows) |
 view_mode="$initial_view_mode"
 current_query="$query"
 preview_scope="$initial_preview_scope"
+switch_stay_key_label=
+switch_stay_bind=
+
+if [ "$enable_switch_stay" -eq 1 ]; then
+  printf -v quoted_self '%q' "$SELF"
+  if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/null 2>&1; then
+    switch_stay_key_label=ctrl-enter
+    switch_stay_keys=(ctrl-enter)
+  else
+    switch_stay_key_label=ctrl-j/alt-enter
+    switch_stay_keys=(ctrl-j alt-enter)
+  fi
+
+  switch_stay_bind=
+  for key in "${switch_stay_keys[@]}"; do
+    [ -n "$switch_stay_bind" ] && switch_stay_bind+=","
+    switch_stay_bind+="$key:execute($quoted_self --switch-stay-branch {1})"
+  done
+fi
 
 while true; do
+  switch_stay_header=
+  if [ -n "$switch_stay_key_label" ]; then
+    switch_stay_header="$switch_stay_key_label: switch+stay, "
+  fi
+
   if [ "$view_mode" = tree ]; then
     active_rows="$tree_branch_rows"
-    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent'
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
   elif [ "$view_mode" = full-dag ]; then
     if [ -z "${full_dag_branch_rows+x}" ]; then
       full_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows) || exit
     fi
 
     active_rows="$full_dag_branch_rows"
-    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent'
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
   elif [ "$view_mode" = handmade-dag ]; then
     if [ -z "${handmade_dag_branch_rows+x}" ]; then
       handmade_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_handmade_dag_rows) || exit
     fi
 
     active_rows="$handmade_dag_branch_rows"
-    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, ctrl-y: git graph view, alt-up/down: scroll preview'
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, ctrl-y: git graph view, alt-up/down: scroll preview"
   elif [ "$view_mode" = git-graph ]; then
     if [ -z "${git_graph_branch_rows+x}" ]; then
       git_graph_branch_rows=$(select_git_branch_git_graph_rows) || exit
     fi
 
     active_rows="$git_graph_branch_rows"
-    header='enter: select branch row, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: list view, alt-up/down: scroll preview'
+    header="enter: select branch row, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: list view, alt-up/down: scroll preview"
   else
     active_rows="$branch_rows"
-    header='enter: select branch, ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview'
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview"
   fi
 
-  selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope")
+  selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope" "$switch_stay_bind")
   fzf_status=$?
 
   if [ "$fzf_status" -ne 0 ]; then
