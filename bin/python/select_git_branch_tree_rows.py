@@ -257,6 +257,29 @@ def print_branch_parent_diff_preview(branch, view):
         print_branch_parent_diff(rows[parent_index]["branch"], branch)
 
 
+def print_nearest_parent_branch(branch):
+    if not branch:
+        sys.stderr.write("branch is required\n")
+        sys.exit(2)
+
+    rows = local_branch_rows()
+    selected_index = next(
+        (index for index, row in enumerate(rows) if row["branch"] == branch),
+        None,
+    )
+    if selected_index is None:
+        sys.stderr.write(f"branch not found: {branch}\n")
+        sys.exit(1)
+
+    parents_by_commit = commit_parent_map()
+    parent_index = nearest_parent_indices(rows, parents_by_commit)[selected_index]
+    if parent_index is None:
+        sys.stderr.write(f"no parent branch found for {branch}\n")
+        sys.exit(1)
+
+    print(rows[parent_index]["branch"])
+
+
 def commit_parent_map():
     try:
         result = subprocess.run(
@@ -585,6 +608,13 @@ def main():
                 return
 
             print_branch_parent_diff_preview(sys.argv[branch_argument_index], preview_view)
+            return
+        elif sys.argv[1] in {"--nearest-parent", "--parent"}:
+            if len(sys.argv) <= 2:
+                sys.stderr.write("--nearest-parent requires a branch\n")
+                sys.exit(2)
+
+            print_nearest_parent_branch(sys.argv[2])
             return
         elif sys.argv[1] in {"--git-graph", "--y-graph", "git-graph", "y-graph"}:
             print_git_graph_rows()

@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # Repeatedly fuzzy-select changed files and open each in VS Code.
-# Usage: gscode [-b <branch-or-ref> | --branch <branch-or-ref>] [query]
+# Usage: gscode [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree] [query]
 #
 # Keys in the picker:
 #   Enter    open the selected file in VS Code
@@ -8,6 +8,7 @@
 #   Ctrl-D   open the selected file in `code --diff`
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
+SELECT_GIT_BRANCH_TREE_ROWS="$(cd "$(dirname "$0")" && pwd)/python/select_git_branch_tree_rows.py"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 usage() {
@@ -19,15 +20,18 @@ Usage:
   gscode -b <branch-or-ref> [query]
   gscode --branch <branch-or-ref> [query]
   gscode --branch=<branch-or-ref> [query]
+  gscode -g|--graph|--tree [query]
   gscode -h | --help
 
 Examples:
   gscode -b main
   gscode -b HEAD~1
   gscode --branch origin/main zsh
+  gscode -g zsh
 
 Default mode lists dirty tracked and untracked files.
 Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
+Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
 
 Keys:
   Enter       open the selected file in VS Code
@@ -113,6 +117,7 @@ if [ "$1" = "--diff-file" ]; then
 fi
 
 base_ref=
+graph_parent_mode=0
 fzf_query_parts=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -135,6 +140,9 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             fi
             ;;
+        -g|--graph|--tree)
+            graph_parent_mode=1
+            ;;
         --)
             shift
             fzf_query_parts+=("$@")
@@ -149,6 +157,21 @@ done
 
 fzf_query="${(j: :)fzf_query_parts}"
 quoted_self=${(q)SELF}
+
+if [ "$graph_parent_mode" -eq 1 ]; then
+    if [ -n "$base_ref" ]; then
+        echo "gscode: choose either -g/--graph/--tree or -b/--branch, not both" >&2
+        exit 2
+    fi
+
+    current_branch=$(git branch --show-current)
+    if [ -z "$current_branch" ]; then
+        echo "gscode: -g requires being on a local branch" >&2
+        exit 1
+    fi
+
+    base_ref=$(uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --nearest-parent "$current_branch") || exit
+fi
 
 if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/null 2>&1; then
     open_stay_key_label="ctrl-enter"
