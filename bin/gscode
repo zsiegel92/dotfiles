@@ -3,9 +3,10 @@
 # Usage: gscode [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree] [query]
 #
 # Keys in the picker:
-#   Enter    open the selected file in VS Code
+#   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
 #   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
 #   Ctrl-D   open the selected file in `code --diff`
+#   Ctrl-S   toggle the preview between unified and side-by-side hunk views
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 SELECT_GIT_BRANCH_TREE_ROWS="$(cd "$(dirname "$0")" && pwd)/python/select_git_branch_tree_rows.py"
@@ -34,9 +35,16 @@ Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
 Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
 
 Keys:
-  Enter       open the selected file in VS Code
+  Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
   Open+stay   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter
   Ctrl-D      open the selected file in code --diff
+  Ctrl-S      toggle unified and side-by-side hunk previews
+  Esc         return to the unified preview from side-by-side mode; otherwise exit
+
+Interactive hunk pager:
+  n            jump to the next hunk
+  N            jump to the previous hunk
+  q            return to the fzf picker
 
 In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb.
 EOF
@@ -58,6 +66,105 @@ preview_file() {
         else
             cat -- "$f"
         fi
+    fi
+}
+
+preview_file_side_by_side() {
+    local base_ref f cols
+    base_ref="$1"
+    f="$2"
+    [ -z "$f" ] && return 0
+
+    if ! command -v delta >/dev/null 2>&1; then
+        echo "Side-by-side preview requires delta (https://github.com/dandavison/delta)." >&2
+        return 1
+    fi
+
+    cols="${FZF_PREVIEW_COLUMNS:-}"
+    if [ -z "$cols" ] || [ "$cols" -lt 40 ]; then
+        cols=200
+    fi
+
+    if [ -n "$base_ref" ]; then
+        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --paging=never
+    elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --paging=never
+    elif [ -f "$f" ]; then
+        if command -v bat >/dev/null 2>&1; then
+            bat --color=always --style=numbers --terminal-width="$cols" -- "$f"
+        else
+            cat -- "$f"
+        fi
+    fi
+}
+
+page_file_side_by_side() {
+    local base_ref f cols
+    base_ref="$1"
+    f="$2"
+    [ -z "$f" ] && return 0
+
+    if ! command -v delta >/dev/null 2>&1; then
+        echo "Interactive hunk navigation requires delta (https://github.com/dandavison/delta)." >&2
+        return 1
+    fi
+
+    cols=$(stty size < /dev/tty 2>/dev/null | awk '{print $2}')
+    if [ -z "$cols" ] || [ "$cols" -lt 40 ]; then
+        cols=$(tput cols 2>/dev/null)
+    fi
+    [ -z "$cols" ] && cols=200
+    export COLUMNS="$cols"
+
+    if [ -n "$base_ref" ]; then
+        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "less -R"
+    elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "less -R"
+    elif [ -f "$f" ]; then
+        if command -v bat >/dev/null 2>&1; then
+            bat --color=always --paging=always --style=numbers --terminal-width="$cols" -- "$f"
+        else
+            less -R -- "$f"
+        fi
+    fi
+}
+
+enter_preview_action() {
+    local base_ref="$1" f="$2" quoted_self quoted_f pager_command
+
+    if [ "$FZF_PREVIEW_LABEL" != "side-by-side hunks" ]; then
+        print -r -- accept
+        return
+    fi
+
+    quoted_self=${(q)SELF}
+    quoted_f=${(q)f}
+    if [ -n "$base_ref" ]; then
+        local quoted_base_ref=${(q)base_ref}
+        pager_command="$quoted_self --page-side-by-side --branch $quoted_base_ref $quoted_f"
+    else
+        pager_command="$quoted_self --page-side-by-side $quoted_f"
+    fi
+    print -r -- "execute[$pager_command]"
+}
+
+preview_toggle_actions() {
+    local base_ref="$1" quoted_self unified_preview side_by_side_preview
+    quoted_self=${(q)SELF}
+
+    if [ -n "$base_ref" ]; then
+        local quoted_base_ref=${(q)base_ref}
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref {}"
+        side_by_side_preview="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
+    else
+        unified_preview="$quoted_self --preview-file {}"
+        side_by_side_preview="$quoted_self --preview-side-by-side {}"
+    fi
+
+    if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
+        print -r -- "change-preview[$unified_preview]+change-preview-window[right,50%,border-left,wrap]+change-preview-label[unified diff]"
+    else
+        print -r -- "change-preview[$side_by_side_preview]+change-preview-window[down,70%,border-top,nowrap]+change-preview-label[side-by-side hunks]"
     fi
 }
 
@@ -101,6 +208,40 @@ if [ "$1" = "--preview-file" ]; then
         shift 2
     fi
     preview_file "$base_ref" "$1"
+    exit 0
+fi
+
+# Internal: invoked by the fzf side-by-side preview and its mode-specific bindings.
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ]; then
+    internal_action="$1"
+    shift
+    base_ref=
+    if [ "$1" = "--branch" ]; then
+        base_ref="$2"
+        shift 2
+    fi
+
+    case "$internal_action" in
+        --preview-side-by-side)
+            preview_file_side_by_side "$base_ref" "$1"
+            ;;
+        --page-side-by-side)
+            page_file_side_by_side "$base_ref" "$1"
+            ;;
+        --toggle-preview)
+            preview_toggle_actions "$base_ref"
+            ;;
+        --escape-preview)
+            if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
+                preview_toggle_actions "$base_ref"
+            else
+                print -r -- abort
+            fi
+            ;;
+        --enter-preview)
+            enter_preview_action "$base_ref" "$1"
+            ;;
+    esac
     exit 0
 fi
 
@@ -194,14 +335,20 @@ if [ -n "$base_ref" ]; then
     fi
     changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: open in code · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working)"
+    header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
+    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref"
+    preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref"
+    preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: open in code · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working)"
+    header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     preview_cmd="$quoted_self --preview-file {}"
+    preview_toggle_cmd="$quoted_self --toggle-preview"
+    preview_escape_cmd="$quoted_self --escape-preview"
+    preview_enter_cmd="$quoted_self --enter-preview {}"
 fi
 
 while true; do
@@ -215,9 +362,13 @@ while true; do
     --wrap \
     --ansi \
     --header "$header" \
+    --preview-label "unified diff" \
     --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
+    --bind "ctrl-s:transform($preview_toggle_cmd)" \
+    --bind "esc:transform($preview_escape_cmd)" \
+    --bind "enter:transform($preview_enter_cmd)" \
     --preview "$preview_cmd")
     if [ -n "$selected_filename" ]; then
         code "$selected_filename"
