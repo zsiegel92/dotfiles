@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # Repeatedly fuzzy-select changed files and open each in VS Code.
-# Usage: gscode [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree] [query]
+# Usage: gscode [-s|--side-by-side] [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree] [query]
 #
 # Keys in the picker:
 #   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
@@ -17,11 +17,11 @@ usage() {
 gscode - fuzzy-open changed files in VS Code
 
 Usage:
-  gscode [query]
-  gscode -b <branch-or-ref> [query]
-  gscode --branch <branch-or-ref> [query]
-  gscode --branch=<branch-or-ref> [query]
-  gscode -g|--graph|--tree [query]
+  gscode [-s|--side-by-side] [query]
+  gscode [-s|--side-by-side] -b <branch-or-ref> [query]
+  gscode [-s|--side-by-side] --branch <branch-or-ref> [query]
+  gscode [-s|--side-by-side] --branch=<branch-or-ref> [query]
+  gscode [-s|--side-by-side] -g|--graph|--tree [query]
   gscode -h | --help
 
 Examples:
@@ -29,10 +29,13 @@ Examples:
   gscode -b HEAD~1
   gscode --branch origin/main zsh
   gscode -g zsh
+  gscode -s
+  gscode -s -b main zsh
 
 Default mode lists dirty tracked and untracked files.
 Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
 Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
+Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side preview. Ctrl-S and Esc still return to the unified preview.
 
 Keys:
   Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
@@ -259,6 +262,7 @@ fi
 
 base_ref=
 graph_parent_mode=0
+start_side_by_side=0
 fzf_query_parts=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -283,6 +287,9 @@ while [ "$#" -gt 0 ]; do
             ;;
         -g|--graph|--tree)
             graph_parent_mode=1
+            ;;
+        -s|--side-by-side)
+            start_side_by_side=1
             ;;
         --)
             shift
@@ -337,7 +344,8 @@ if [ -n "$base_ref" ]; then
     quoted_base_ref=${(q)base_ref}
     header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
-    preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
+    unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
+    side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
     preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref"
     preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref"
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
@@ -345,10 +353,21 @@ else
     changed_files=$("$HELPERS/gscode_changed_files")
     header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
-    preview_cmd="$quoted_self --preview-file {}"
+    unified_preview_cmd="$quoted_self --preview-file {}"
+    side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
     preview_toggle_cmd="$quoted_self --toggle-preview"
     preview_escape_cmd="$quoted_self --escape-preview"
     preview_enter_cmd="$quoted_self --enter-preview {}"
+fi
+
+if [ "$start_side_by_side" -eq 1 ]; then
+    preview_cmd="$side_by_side_preview_cmd"
+    preview_label="side-by-side hunks"
+    preview_window="down,70%,border-top,nowrap"
+else
+    preview_cmd="$unified_preview_cmd"
+    preview_label="unified diff"
+    preview_window="right,50%,border-left,wrap"
 fi
 
 while true; do
@@ -362,7 +381,8 @@ while true; do
     --wrap \
     --ansi \
     --header "$header" \
-    --preview-label "unified diff" \
+    --preview-label "$preview_label" \
+    --preview-window "$preview_window" \
     --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
