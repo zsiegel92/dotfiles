@@ -38,7 +38,7 @@ def read_branch_rows():
 def local_branch_rows():
     try:
         result = subprocess.run(
-            ["git", "branch", "--format=%(refname:short)%09%(objectname)"],
+            ["git", "branch", "--format=%(HEAD)%09%(refname:short)%09%(objectname)"],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -51,13 +51,13 @@ def local_branch_rows():
     rows = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
 
         rows.append({
-            "branch": parts[0],
-            "oid": parts[1],
-            "marker": " ",
+            "branch": parts[1],
+            "oid": parts[2],
+            "marker": "*" if parts[0] == "*" else " ",
         })
 
     return rows

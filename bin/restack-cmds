@@ -1,0 +1,90 @@
+#!/usr/bin/env -S uv run --script
+# Print the current branch's descendant tree and commands that would restack it.
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["typer"]
+# ///
+
+import shlex
+import sys
+
+import typer
+
+from python import select_git_branch_tree_rows as branch_tree
+
+
+def current_branch_index(rows):
+    current_indices = [index for index, row in enumerate(rows) if row["marker"] == "*"]
+    if len(current_indices) != 1:
+        sys.stderr.write("restack-cmds requires a checked-out local branch\n")
+        sys.exit(1)
+
+    return current_indices[0]
+
+
+def print_descendant_tree(rows, children, current_index):
+    descendant_order = []
+
+    def render(index, prefix, is_last, depth):
+        if depth == 0:
+            display = branch_tree.visible_branch(rows, index)
+            next_prefix = ""
+        else:
+            connector = "└─ " if is_last else "├─ "
+            display = prefix + connector + branch_tree.visible_branch(rows, index)
+            next_prefix = prefix + ("   " if is_last else "│  ")
+            descendant_order.append(index)
+
+        print(display)
+
+        child_indices = sorted(children[index])
+        for child_position, child_index in enumerate(child_indices):
+            render(child_index, next_prefix, child_position == len(child_indices) - 1, depth + 1)
+
+    render(current_index, "", True, 0)
+    return descendant_order
+
+
+def print_script(rows, parent_indices, descendant_order, push):
+    print()
+    print("CHANGE_MSG='...'")
+    print('git add . && git commit -m "$CHANGE_MSG"')
+
+    for index in descendant_order:
+        parent_index = parent_indices[index]
+        if parent_index is None:
+            raise RuntimeError(f"descendant branch has no parent: {rows[index]['branch']}")
+
+        branch = shlex.quote(rows[index]["branch"])
+        parent_branch = shlex.quote(rows[parent_index]["branch"])
+        print(f"git checkout {branch}")
+        print(f"git merge --no-edit {parent_branch}")
+        if push:
+            print("git push origin HEAD")
+
+
+def main(
+    push: bool = typer.Option(
+        False,
+        "--push",
+        "-p",
+        help="Include 'git push origin HEAD' after each merge.",
+    ),
+):
+    """Print the current branch's descendant tree and a restack script without executing it."""
+    rows = branch_tree.local_branch_rows()
+    if not rows:
+        return
+
+    parent_indices = branch_tree.nearest_parent_indices(rows, branch_tree.commit_parent_map())
+    parent_index_sets = [
+        [] if parent_index is None else [parent_index]
+        for parent_index in parent_indices
+    ]
+    children = branch_tree.children_by_parent(parent_index_sets)
+    descendant_order = print_descendant_tree(rows, children, current_branch_index(rows))
+    print_script(rows, parent_indices, descendant_order, push)
+
+
+if __name__ == "__main__":
+    typer.run(main)
