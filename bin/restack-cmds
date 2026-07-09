@@ -49,6 +49,8 @@ def print_script(rows, parent_indices, descendant_order, push):
     print()
     print("CHANGE_MSG='...'")
     print('git add . && git commit -m "$CHANGE_MSG"')
+    if push:
+        print("git push origin HEAD")
 
     for index in descendant_order:
         parent_index = parent_indices[index]
@@ -68,7 +70,7 @@ def main(
         False,
         "--push",
         "-p",
-        help="Include 'git push origin HEAD' after each merge.",
+        help="Include 'git push origin HEAD' after the commit and each merge.",
     ),
 ):
     """Print the current branch's descendant tree and a restack script without executing it."""
