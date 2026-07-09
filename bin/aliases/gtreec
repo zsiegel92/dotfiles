@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Copy git branch tree view to the clipboard.
+gtree "$@" | pbcopy
