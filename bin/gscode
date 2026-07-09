@@ -165,9 +165,9 @@ preview_toggle_actions() {
     fi
 
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-        print -r -- "change-preview[$unified_preview]+change-preview-window[right,50%,border-left,wrap]+change-preview-label[unified diff]"
+        print -r -- "change-preview-window[right,50%,border-left,wrap]+change-preview[$unified_preview]+change-preview-label[unified diff]"
     else
-        print -r -- "change-preview[$side_by_side_preview]+change-preview-window[down,70%,border-top,nowrap]+change-preview-label[side-by-side hunks]"
+        print -r -- "change-preview-window[down,70%,border-top,nowrap]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]"
     fi
 }
 
