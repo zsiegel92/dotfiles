@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Print the current or specified local branch's inferred parent, if one exists.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TREE_ROWS="$SCRIPT_DIR/python/select_git_branch_tree_rows.py"
+
+usage() {
+  cat <<'EOF'
+Usage: gparent [branch]
+
+Print the inferred parent of the current local branch, or of the specified local branch.
+Print nothing when the branch has no inferred parent or HEAD is detached.
+EOF
+}
+
+if [ "$#" -gt 1 ]; then
+  usage >&2
+  exit 2
+fi
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+branch="${1:-}"
+if [ -z "$branch" ]; then
+  branch=$(git branch --show-current)
+fi
+
+if [ -z "$branch" ]; then
+  exit 0
+fi
+
+uv run --script "$TREE_ROWS" --parent-if-exists "$branch"

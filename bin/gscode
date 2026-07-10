@@ -9,7 +9,7 @@
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
-SELECT_GIT_BRANCH_TREE_ROWS="$(cd "$(dirname "$0")" && pwd)/python/select_git_branch_tree_rows.py"
+GPARENT="$(cd "$(dirname "$0")" && pwd)/gparent"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 usage() {
@@ -318,7 +318,11 @@ if [ "$graph_parent_mode" -eq 1 ]; then
         exit 1
     fi
 
-    base_ref=$(uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --nearest-parent "$current_branch") || exit
+    base_ref=$("$GPARENT" "$current_branch") || exit
+    if [ -z "$base_ref" ]; then
+        echo "gscode: no parent branch found for $current_branch" >&2
+        exit 1
+    fi
 fi
 
 if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/null 2>&1; then
