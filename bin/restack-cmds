@@ -61,16 +61,17 @@ def print_script(rows, parent_indices, descendant_order, push):
         parent_branch = shlex.quote(rows[parent_index]["branch"])
         print(f"git checkout {branch}")
         print(f"git merge --no-edit {parent_branch}")
+        print("# resolve merge conflicts and logical issues due to merge")
         if push:
             print("git push origin HEAD")
 
 
 def main(
     push: bool = typer.Option(
-        False,
-        "--push",
-        "-p",
-        help="Include 'git push origin HEAD' after the commit and each merge.",
+        True,
+        "--push/--no-push",
+        "-p/-n",
+        help="Include or omit 'git push origin HEAD' after the commit and each merge.",
     ),
 ):
     """Print the current branch's descendant tree and a restack script without executing it."""
