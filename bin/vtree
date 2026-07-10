@@ -1,0 +1,360 @@
+#!/usr/bin/env zsh
+# Browse the tracked file tree and open a selected file in VS Code.
+
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+usage() {
+    cat <<'EOF'
+vtree - browse git-tracked files and open one in VS Code
+
+Usage:
+  vtree [-f] [-r] [directory]
+  vtree -h | --help
+
+The picker starts at DIRECTORY, or the current directory by default. Use -f to start with repo-root-relative rows instead of tree-style rows. Use -r to start with recursion turned off.
+
+Keys:
+  Enter       open a file, or enter a directory
+  Ctrl-E      go up one directory (stops at the repository root)
+  Ctrl-R      toggle recursive and current-directory-only views
+  Ctrl-F      toggle tree-style and repo-root-relative rows
+  Ctrl-V      toggle tree-style and start-folder-relative rows
+  Ctrl-X      copy the start-folder-relative path
+  Ctrl-S      copy the repo-root-relative path
+  Page Up     scroll the preview up one page
+  Page Down   scroll the preview down one page
+  Alt-Up      scroll the preview up one line
+  Alt-Down    scroll the preview down one line
+  Esc         exit
+EOF
+}
+
+read_state() {
+    repo_root=$(sed -n '1p' "$1")
+    current_dir=$(sed -n '2p' "$1")
+    view_mode=$(sed -n '3p' "$1")
+    display_mode=$(sed -n '4p' "$1")
+    start_dir=$(sed -n '5p' "$1")
+}
+
+tracked_files_below() {
+    local directory="$1"
+    if [ -n "$directory" ]; then
+        git -C "$repo_root" ls-tree -r --name-only HEAD -- "$directory"
+    else
+        git -C "$repo_root" ls-tree -r --name-only HEAD
+    fi
+}
+
+relative_path_from() {
+    local from="$1" target="${2%/}" component
+    local -a from_parts target_parts result
+    from_parts=("${(@s:/:)from}")
+    target_parts=("${(@s:/:)target}")
+    from_parts=("${(@)from_parts:#}")
+    target_parts=("${(@)target_parts:#}")
+
+    while [ "${#from_parts}" -gt 0 ] && [ "${#target_parts}" -gt 0 ] && [ "$from_parts[1]" = "$target_parts[1]" ]; do
+        from_parts=("${(@)from_parts[2,-1]}")
+        target_parts=("${(@)target_parts[2,-1]}")
+    done
+    for component in "${from_parts[@]}"; do
+        result+=(..)
+    done
+    result+=("${target_parts[@]}")
+
+    if [ "${#result}" -eq 0 ]; then
+        print -r -- .
+    else
+        print -r -- "${(j:/:)result}"
+    fi
+}
+
+find_style_path() {
+    if [ "$1" = "." ] || [ "$1" = "./" ]; then
+        print -r -- ./
+    elif [[ "$1" == ../* ]] || [ "$1" = ".." ]; then
+        print -r -- "$1"
+    else
+        print -r -- "./$1"
+    fi
+}
+
+list_entries() {
+    local state_file="$1" repo_path relative_path first_part parent_path find_path entry_type line path_without_slash display repo_entry start_entry
+    local -A directories files
+    read_state "$state_file"
+
+    while IFS= read -r repo_path; do
+        [ -z "$repo_path" ] && continue
+        if [ -n "$current_dir" ]; then
+            relative_path="${repo_path#"$current_dir"/}"
+        else
+            relative_path="$repo_path"
+        fi
+
+        if [ "$view_mode" = "collapsed" ]; then
+            if [[ "$relative_path" == */* ]]; then
+                first_part="${relative_path%%/*}"
+                directories[$first_part]=1
+            else
+                files[$relative_path]=1
+            fi
+            continue
+        fi
+
+        files[$relative_path]=1
+        parent_path="${relative_path:h}"
+        while [ "$parent_path" != "." ]; do
+            directories[$parent_path]=1
+            parent_path="${parent_path:h}"
+        done
+    done < <(tracked_files_below "$current_dir")
+
+    {
+        for relative_path in ${(ok)directories}; do
+            printf '%s/\n' "$relative_path"
+        done
+        for relative_path in ${(ok)files}; do
+            printf '%s\n' "$relative_path"
+        done
+    } | tree --fromfile -f -F --noreport | while IFS= read -r line; do
+        [ "$line" = "./" ] && continue
+        find_path="${line##*── }"
+        if [[ "$find_path" == */ ]]; then
+            entry_type=directory
+        else
+            entry_type=file
+        fi
+        path_without_slash="${find_path%/}"
+        display="${line%%./*}${path_without_slash:t}"
+        repo_entry=$(join_repo_path "$current_dir" "$find_path")
+        start_entry=$(relative_path_from "$start_dir" "$repo_entry")
+        if [ "$entry_type" = "directory" ]; then
+            display+="/"
+            repo_entry+="/"
+            start_entry+="/"
+        fi
+        case "$display_mode" in
+            repo)
+                display=$(find_style_path "$repo_entry")
+                ;;
+            start)
+                display=$(find_style_path "$start_entry")
+                ;;
+        esac
+        printf '%s\t%s\t%s\t%s\n' "$repo_entry" "$start_entry" "$entry_type" "$display"
+    done
+}
+
+join_repo_path() {
+    local directory="$1" relative_path="${2#./}"
+    relative_path="${relative_path%/}"
+    if [ -n "$directory" ]; then
+        print -r -- "$directory/$relative_path"
+    else
+        print -r -- "$relative_path"
+    fi
+}
+
+preview_entry() {
+    local state_file="$1" entry_type="$2" repo_path="${3%/}" child_path
+    read_state "$state_file"
+
+    if [ "$entry_type" = "directory" ]; then
+        tracked_files_below "$repo_path" | while IFS= read -r child_path; do
+            print -r -- "${child_path#"$repo_path"/}"
+        done | tree --fromfile -C --noreport
+    elif [ "$entry_type" = "file" ] && [ -f "$repo_root/$repo_path" ]; then
+        bat --color=always --style=numbers -- "$repo_root/$repo_path"
+    fi
+}
+
+write_state() {
+    printf '%s\n%s\n%s\n%s\n%s\n' "$repo_root" "$current_dir" "$view_mode" "$display_mode" "$start_dir" >| "$1"
+}
+
+reload_action() {
+    local state_file="$1" quoted_self quoted_state
+    quoted_self=${(q)SELF}
+    quoted_state=${(q)state_file}
+    print -r -- "reload($quoted_self --list $quoted_state)+clear-query+refresh-preview+change-list-label($view_mode, $display_mode style)"
+}
+
+enter_entry() {
+    local state_file="$1" entry_type="$2" repo_path="$3"
+    read_state "$state_file"
+    if [ "$entry_type" = "file" ]; then
+        print -r -- accept
+        return
+    fi
+    if [ "$entry_type" = "directory" ]; then
+        current_dir="${repo_path%/}"
+        write_state "$state_file"
+        reload_action "$state_file"
+    fi
+}
+
+go_up() {
+    local state_file="$1"
+    read_state "$state_file"
+    if [ -n "$current_dir" ]; then
+        current_dir="${current_dir:h}"
+        [ "$current_dir" = "." ] && current_dir=
+        write_state "$state_file"
+    fi
+    reload_action "$state_file"
+}
+
+toggle_view() {
+    local state_file="$1"
+    read_state "$state_file"
+    if [ "$view_mode" = "recursive" ]; then
+        view_mode=collapsed
+    else
+        view_mode=recursive
+    fi
+    write_state "$state_file"
+    reload_action "$state_file"
+}
+
+toggle_display() {
+    local state_file="$1" requested_mode="$2"
+    read_state "$state_file"
+    if [ "$display_mode" = "$requested_mode" ]; then
+        display_mode=tree
+    else
+        display_mode="$requested_mode"
+    fi
+    write_state "$state_file"
+    reload_action "$state_file"
+}
+
+case "$1" in
+    --list)
+        list_entries "$2"
+        exit
+        ;;
+    --preview)
+        preview_entry "$2" "$3" "$4"
+        exit
+        ;;
+    --enter)
+        enter_entry "$2" "$3" "$4"
+        exit
+        ;;
+    --up)
+        go_up "$2"
+        exit
+        ;;
+    --toggle)
+        toggle_view "$2"
+        exit
+        ;;
+    --toggle-display)
+        toggle_display "$2" "$3"
+        exit
+        ;;
+    --copy)
+        printf '%s' "$2" | pbcopy
+        exit
+        ;;
+esac
+
+display_mode=tree
+view_mode=recursive
+start_directory=.
+start_directory_set=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit
+            ;;
+        -f|--find)
+            display_mode=repo
+            ;;
+        -r)
+            view_mode=collapsed
+            ;;
+        --)
+            shift
+            if [ "$#" -gt 1 ]; then
+                echo "vtree: expected at most one starting directory" >&2
+                exit 2
+            fi
+            if [ "$#" -eq 1 ]; then
+                start_directory="$1"
+                start_directory_set=1
+            fi
+            break
+            ;;
+        -*)
+            echo "vtree: unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            if [ "$start_directory_set" -eq 1 ]; then
+                echo "vtree: expected at most one starting directory" >&2
+                exit 2
+            fi
+            start_directory="$1"
+            start_directory_set=1
+            ;;
+    esac
+    shift
+done
+
+for required_command in git fzf code bat tree pbcopy; do
+    if ! command -v "$required_command" >/dev/null 2>&1; then
+        echo "vtree: required command not found: $required_command" >&2
+        exit 1
+    fi
+done
+
+start_directory=$(cd -- "$start_directory" 2>/dev/null && pwd -P) || {
+    echo "vtree: starting directory does not exist or is not accessible" >&2
+    exit 1
+}
+repo_root=$(git -C "$start_directory" rev-parse --show-toplevel 2>/dev/null) || exit 1
+current_dir=$(git -C "$start_directory" rev-parse --show-prefix)
+current_dir="${current_dir%/}"
+start_dir="$current_dir"
+state_file=$(mktemp -t vtree.XXXXXX) || exit 1
+trap 'rm -f "$state_file"' EXIT INT TERM
+write_state "$state_file"
+
+quoted_self=${(q)SELF}
+quoted_state=${(q)state_file}
+selected=$(list_entries "$state_file" | fzf \
+    --no-mouse \
+    --no-sort \
+    --layout=reverse \
+    --ansi \
+    --border \
+    --delimiter=$'\t' \
+    --with-nth=4.. \
+    --header 'enter: open/enter · ctrl-e: up · ctrl-r: recursion · ctrl-f: repo path · ctrl-v: start path · ctrl-x/ctrl-s: copy start/repo path' \
+    --list-label "$view_mode, $display_mode style" \
+    --preview-label 'file or directory preview' \
+    --preview-window 'right,55%,border-left,nowrap' \
+    --bind 'alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down' \
+    --bind "enter:transform($quoted_self --enter $quoted_state {3} {1})" \
+    --bind "ctrl-e:transform($quoted_self --up $quoted_state)" \
+    --bind "ctrl-r:transform($quoted_self --toggle $quoted_state)" \
+    --bind "ctrl-f:transform($quoted_self --toggle-display $quoted_state repo)" \
+    --bind "ctrl-v:transform($quoted_self --toggle-display $quoted_state start)" \
+    --bind "ctrl-x:execute-silent($quoted_self --copy {2})" \
+    --bind "ctrl-s:execute-silent($quoted_self --copy {1})" \
+    --preview "$quoted_self --preview $quoted_state {3} {1}")
+
+if [ -n "$selected" ]; then
+    read_state "$state_file"
+    repo_path="${selected%%$'\t'*}"
+    selected_without_repo_path="${selected#*$'\t'}"
+    selected_without_start_path="${selected_without_repo_path#*$'\t'}"
+    entry_type="${selected_without_start_path%%$'\t'*}"
+    if [ "$entry_type" = "file" ]; then
+        code "$repo_root/$repo_path"
+    fi
+fi
