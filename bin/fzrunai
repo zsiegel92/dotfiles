@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# Fuzzy-select a Run.AI inference service, preview its models, and port-forward it.
+
+set -u
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fzrunai"
+API_KEYS_DIR="$CONFIG_DIR/api-keys"
+DEFAULT_LOCAL_PORT="${RUNAI_FZF_LOCAL_PORT:-18001}"
+DEFAULT_REMOTE_PORT="${RUNAI_FZF_REMOTE_PORT:-8000}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  fzrunai [--local-port PORT] [--remote-port PORT]
+  fzrunai --list
+  fzrunai --add-api-key SERVICE_NAME API_KEY
+
+Options:
+  --add-api-key SERVICE_NAME API_KEY  Save the API key used to preview this service's models
+  --list                              List available standard inference services without opening fzf
+  --local-port PORT                   Local port for the selected service (default: 18001)
+  --remote-port PORT                  Service port to forward (default: 8000)
+  -h, --help                          Show this help
+
+Environment:
+  RUNAI_BIN               Path to the Run.AI CLI
+  RUNAI_FZF_LOCAL_PORT    Default local port
+  RUNAI_FZF_REMOTE_PORT   Default service port
+  XDG_CONFIG_HOME         Configuration root (default: ~/.config)
+
+The selected port-forward runs in this terminal until interrupted with Ctrl-C.
+In fzf, press Ctrl-A to securely enter or replace the highlighted service's API key.
+EOF
+}
+
+die() {
+  printf 'fzrunai: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+validate_port() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+}
+
+validate_service_name() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+}
+
+find_runai() {
+  if [ -n "${RUNAI_BIN:-}" ]; then
+    [ -x "$RUNAI_BIN" ] || die "RUNAI_BIN is not executable: $RUNAI_BIN"
+    printf '%s\n' "$RUNAI_BIN"
+  elif command -v runai >/dev/null 2>&1; then
+    command -v runai
+  elif [ -x "$HOME/.runai/bin/runai" ]; then
+    printf '%s\n' "$HOME/.runai/bin/runai"
+  else
+    die 'Run.AI CLI not found; install runai or set RUNAI_BIN'
+  fi
+}
+
+api_key_path() {
+  printf '%s/%s\n' "$API_KEYS_DIR" "$1"
+}
+
+add_api_key() {
+  local service_name="$1"
+  local api_key="$2"
+  local key_path
+
+  validate_service_name "$service_name" || die 'service names may contain only letters, numbers, periods, underscores, and hyphens'
+  [ -n "$api_key" ] || die 'API key must not be empty'
+
+  umask 077
+  mkdir -p "$API_KEYS_DIR" || die "could not create $API_KEYS_DIR"
+  chmod 700 "$CONFIG_DIR" "$API_KEYS_DIR" || die 'could not secure configuration directories'
+  key_path=$(api_key_path "$service_name")
+  printf '%s\n' "$api_key" > "$key_path" || die "could not write $key_path"
+  chmod 600 "$key_path" || die "could not secure $key_path"
+  printf 'Saved API key for %s in %s\n' "$service_name" "$key_path"
+}
+
+prompt_for_api_key() {
+  local service_name="$1"
+  local api_key=''
+
+  validate_service_name "$service_name" || die 'invalid service name'
+  printf 'API key for %s: ' "$service_name" >/dev/tty
+  if ! IFS= read -r -s api_key </dev/tty; then
+    printf '\n' >/dev/tty
+    return 1
+  fi
+  printf '\n' >/dev/tty
+  [ -n "$api_key" ] || die 'API key must not be empty'
+  add_api_key "$service_name" "$api_key" >/dev/tty
+}
+
+load_api_key() {
+  local service_name="$1"
+  local key_path
+  local api_key
+
+  key_path=$(api_key_path "$service_name")
+  [ -r "$key_path" ] || return 1
+  IFS= read -r api_key < "$key_path" || [ -n "$api_key" ]
+  [ -n "$api_key" ] || return 1
+  printf '%s\n' "$api_key"
+}
+
+list_services_json() {
+  "$RUNAI" inference standard list --all --json
+}
+
+service_rows() {
+  jq -r '
+    if type != "object" or (.workloads | type) != "array" then
+      error("expected an object containing a workloads array")
+    else
+      .workloads[]
+      | if (.projectName | type) != "string"
+          or (.name | type) != "string"
+          or (.phase | type) != "string"
+          or ([.projectName, .name, .phase] | any(test("[\\t\\r\\n]")))
+          or ((.runningPods | type) != "number" and (.runningPods | type) != "null") then
+          error("workload fields have unexpected types")
+        else
+          [.projectName, .name, .phase, (.runningPods // 0 | tostring)] | @tsv
+        end
+    end
+  '
+}
+
+print_services() {
+  printf 'PROJECT\tSERVICE\tSTATUS\tRUNNING PODS\n'
+  printf '%s\n' "$SERVICE_ROWS" | awk -F '\t' '{ printf "%s\t%s\t%s\t%s\n", $1, $2, $3, $4 }'
+}
+
+choose_preview_port() {
+  python3 -c 'import socket; sock = socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()'
+}
+
+fetch_models_json() {
+  local project="$1"
+  local service_name="$2"
+  local remote_port="$3"
+  local api_key="$4"
+  local local_port
+  local port_forward_pid=''
+  local response=''
+  local attempt=1
+
+  require_command curl
+  require_command python3
+  local_port=$(choose_preview_port) || die 'could not choose a free model-discovery port'
+
+  cleanup_model_fetch() {
+    if [ -n "$port_forward_pid" ]; then
+      kill "$port_forward_pid" >/dev/null 2>&1 || true
+      wait "$port_forward_pid" >/dev/null 2>&1 || true
+    fi
+  }
+  trap cleanup_model_fetch EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  "$RUNAI" inference standard port-forward "$service_name" --project "$project" --port "${local_port}:${remote_port}" --address localhost >/dev/null 2>&1 &
+  port_forward_pid=$!
+
+  while [ "$attempt" -le 40 ]; do
+    if ! kill -0 "$port_forward_pid" >/dev/null 2>&1; then
+      cleanup_model_fetch
+      trap - EXIT INT TERM
+      printf 'Run.AI stopped before the models endpoint became available.\n' >&2
+      return 1
+    fi
+
+    response=$(curl --silent --fail --max-time 2 --header "Authorization: Bearer ${api_key}" "http://127.0.0.1:${local_port}/v1/models" 2>/dev/null || true)
+    [ -n "$response" ] && break
+    sleep 0.25
+    attempt=$((attempt + 1))
+  done
+
+  cleanup_model_fetch
+  trap - EXIT INT TERM
+
+  if [ -z "$response" ]; then
+    printf 'Timed out waiting for the models endpoint.\n' >&2
+    return 1
+  fi
+
+  printf '%s\n' "$response"
+}
+
+extract_model_ids() {
+  jq -er '
+    if type == "object"
+        and (.data | type) == "array"
+        and (.data | length) > 0
+        and all(.data[]; (.id | type) == "string" and ((.id | test("[\\r\\n]")) | not)) then
+      .data[].id
+    else
+      error("expected a non-empty data array containing model IDs")
+    end
+  '
+}
+
+preview_models() {
+  local project="$1"
+  local service_name="$2"
+  local phase="$3"
+  local remote_port="$4"
+  local api_key
+  local response
+  local models
+  local model_id
+
+  printf '%s/%s\n' "$project" "$service_name"
+  printf 'Status: %s\n\n' "$phase"
+
+  case "$phase" in
+    Running|Initializing) ;;
+    *)
+      printf 'This service is not currently available for port-forwarding.\n'
+      return
+      ;;
+  esac
+
+  if ! api_key=$(load_api_key "$service_name"); then
+    printf 'No API key configured. Press Ctrl-A to set one, or run:\n\n'
+    printf '  fzrunai --add-api-key %s <api_key>\n' "$service_name"
+    return
+  fi
+
+  require_command jq
+  if ! response=$(fetch_models_json "$project" "$service_name" "$remote_port" "$api_key"); then
+    return
+  fi
+  if ! models=$(printf '%s\n' "$response" | extract_model_ids); then
+    printf 'The models endpoint returned an unexpected response.\n'
+    return
+  fi
+
+  printf 'Models\n'
+  while IFS= read -r model_id; do
+    printf '• %s\n' "$model_id"
+  done <<< "$models"
+}
+
+mode=select
+local_port="$DEFAULT_LOCAL_PORT"
+remote_port="$DEFAULT_REMOTE_PORT"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --add-api-key)
+      [ "$#" -eq 3 ] || die 'usage: fzrunai --add-api-key SERVICE_NAME API_KEY'
+      add_api_key "$2" "$3"
+      exit
+      ;;
+    --list)
+      mode=list
+      shift
+      ;;
+    --local-port)
+      [ "$#" -ge 2 ] || die '--local-port requires a value'
+      local_port="$2"
+      shift 2
+      ;;
+    --remote-port)
+      [ "$#" -ge 2 ] || die '--remote-port requires a value'
+      remote_port="$2"
+      shift 2
+      ;;
+    --preview)
+      [ "$#" -eq 5 ] || die 'invalid internal preview invocation'
+      RUNAI=$(find_runai)
+      preview_models "$2" "$3" "$4" "$5"
+      exit
+      ;;
+    --prompt-api-key)
+      [ "$#" -eq 2 ] || die 'invalid internal API key prompt invocation'
+      prompt_for_api_key "$2"
+      exit
+      ;;
+    -h|--help)
+      usage
+      exit
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+validate_port "$local_port" || die "invalid local port: $local_port"
+validate_port "$remote_port" || die "invalid remote port: $remote_port"
+require_command jq
+RUNAI=$(find_runai)
+
+services_json=$(list_services_json) || die 'could not list Run.AI inference services'
+SERVICE_ROWS=$(printf '%s\n' "$services_json" | service_rows) || die 'Run.AI returned an unexpected service list'
+[ -n "$SERVICE_ROWS" ] || die 'no standard inference services found'
+
+if [ "$mode" = list ]; then
+  print_services
+  exit
+fi
+
+require_command fzf
+script_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+printf -v quoted_script_path '%q' "$script_path"
+printf -v quoted_remote_port '%q' "$remote_port"
+preview_command="$quoted_script_path --preview {1} {2} {3} $quoted_remote_port"
+set_api_key_command="$quoted_script_path --prompt-api-key {2}"
+
+selected=$(printf '%s\n' "$SERVICE_ROWS" | fzf \
+  --delimiter=$'\t' \
+  --with-nth=2,1,3,4 \
+  --header='service  project  status  running-pods | enter: forward, ctrl-a: set API key, esc: cancel' \
+  --preview="$preview_command" \
+  --preview-window='right:60%:wrap' \
+  --bind="ctrl-a:execute($set_api_key_command)+refresh-preview,alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down" \
+  --no-mouse) || exit $?
+
+[ -n "$selected" ] || die 'no service selected'
+project=${selected%%$'\t'*}
+remaining=${selected#*$'\t'}
+service_name=${remaining%%$'\t'*}
+remaining=${remaining#*$'\t'}
+phase=${remaining%%$'\t'*}
+
+case "$phase" in
+  Running|Initializing) ;;
+  *) die "$project/$service_name is $phase and cannot currently be forwarded" ;;
+esac
+
+model_ids=''
+if api_key=$(load_api_key "$service_name"); then
+  printf 'Fetching models for %s/%s...\n' "$project" "$service_name"
+  if models_response=$(fetch_models_json "$project" "$service_name" "$remote_port" "$api_key"); then
+    if ! model_ids=$(printf '%s\n' "$models_response" | extract_model_ids); then
+      printf 'fzrunai: models endpoint returned an unexpected response; omitting model-specific examples\n' >&2
+      model_ids=''
+    fi
+  else
+    printf 'fzrunai: could not fetch models; omitting model-specific examples\n' >&2
+  fi
+else
+  printf 'fzrunai: no API key for %s; omitting model-specific examples\n' "$service_name" >&2
+fi
+
+key_path=$(api_key_path "$service_name")
+models_url="http://127.0.0.1:${local_port}/v1/models"
+chat_completions_url="http://127.0.0.1:${local_port}/v1/chat/completions"
+responses_url="http://127.0.0.1:${local_port}/v1/responses"
+printf -v quoted_key_path '%q' "$key_path"
+printf -v quoted_models_url '%q' "$models_url"
+printf -v quoted_chat_completions_url '%q' "$chat_completions_url"
+printf -v quoted_responses_url '%q' "$responses_url"
+port_forward_command=("$RUNAI" inference standard port-forward "$service_name" --project "$project" --port "${local_port}:${remote_port}" --address localhost)
+
+printf 'Forwarding %s/%s in this terminal\n' "$project" "$service_name"
+printf '  http://127.0.0.1:%s -> service port %s\n' "$local_port" "$remote_port"
+printf '  Command:'
+printf ' %q' "${port_forward_command[@]}"
+printf '\n'
+printf '  Models: %s\n' "$models_url"
+printf '  Swagger: http://127.0.0.1:%s/docs\n' "$local_port"
+printf 'Run from another terminal after the tunnel starts:\n'
+printf '  curl --header "Authorization: Bearer $(cat %s)" %s\n' "$quoted_key_path" "$quoted_models_url"
+
+while IFS= read -r model_id; do
+  [ -n "$model_id" ] || continue
+  chat_payload=$(jq -nr --arg model "$model_id" --arg prompt 'Respond with just ok' '{model:$model,messages:[{role:"user",content:$prompt}]} | tojson | @sh')
+  responses_payload=$(jq -nr --arg model "$model_id" --arg prompt 'Respond with just ok' '{model:$model,input:$prompt} | tojson | @sh')
+  printf '\nModel: %s\n' "$model_id"
+  printf '  Chat Completions:\n'
+  printf '  curl --header "Authorization: Bearer $(cat %s)" --json %s %s\n' "$quoted_key_path" "$chat_payload" "$quoted_chat_completions_url"
+  printf '  Responses:\n'
+  printf '  curl --header "Authorization: Bearer $(cat %s)" --json %s %s\n' "$quoted_key_path" "$responses_payload" "$quoted_responses_url"
+done <<< "$model_ids"
+printf 'Press Ctrl-C to stop.\n'
+
+exec "${port_forward_command[@]}"
