@@ -213,6 +213,63 @@ extract_model_ids() {
   '
 }
 
+is_ipv4_address() {
+  local address="$1"
+  local first
+  local second
+  local third
+  local fourth
+  local extra
+
+  IFS=. read -r first second third fourth extra <<< "$address"
+  [ -z "$extra" ] || return 1
+  for octet in "$first" "$second" "$third" "$fourth"; do
+    case "$octet" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$octet" -le 255 ] || return 1
+  done
+}
+
+resolve_service_ip() {
+  local project="$1"
+  local service_name="$2"
+  local service_host="${service_name}.runai-${project}.svc.cluster.local"
+  local resolver_output
+  local service_ip
+
+  resolver_output=$("$RUNAI" inference standard exec "$service_name" --project "$project" -- getent ahostsv4 "$service_host" 2>/dev/null) || return 1
+  service_ip=$(printf '%s\n' "$resolver_output" | awk 'NR == 1 { print $1 }')
+  is_ipv4_address "$service_ip" || return 1
+  printf '%s\n' "$service_ip"
+}
+
+print_direct_responses_examples() {
+  local project="$1"
+  local service_name="$2"
+  local key_path="$3"
+  local model_ids="$4"
+  local service_host="${service_name}.runai-${project}.svc.cluster.local"
+  local service_ip
+  local model_id
+  local responses_payload
+  local quoted_key_path
+
+  [ -n "$model_ids" ] || return
+  if ! service_ip=$(resolve_service_ip "$project" "$service_name"); then
+    printf 'Could not resolve the service cluster IP; omitting direct cluster-IP examples.\n'
+    return
+  fi
+
+  printf -v quoted_key_path '%q' "$key_path"
+  printf '\nDirect cluster-IP Responses:\n'
+  while IFS= read -r model_id; do
+    [ -n "$model_id" ] || continue
+    responses_payload=$(jq -nr --arg model "$model_id" --arg prompt 'Respond with just ok' '{model:$model,input:$prompt} | tojson | @sh')
+    printf '  curl --header '\''Host: %s'\'' --header "Authorization: Bearer $(cat %s)" --json %s http://%s/v1/responses\n' "$service_host" "$quoted_key_path" "$responses_payload" "$service_ip"
+  done <<< "$model_ids"
+}
+
 preview_models() {
   local project="$1"
   local service_name="$2"
@@ -253,6 +310,7 @@ preview_models() {
   while IFS= read -r model_id; do
     printf '• %s\n' "$model_id"
   done <<< "$models"
+  print_direct_responses_examples "$project" "$service_name" "$(api_key_path "$service_name")" "$models"
 }
 
 mode=select
@@ -388,6 +446,7 @@ while IFS= read -r model_id; do
   printf '  Responses:\n'
   printf '  curl --header "Authorization: Bearer $(cat %s)" --json %s %s\n' "$quoted_key_path" "$responses_payload" "$quoted_responses_url"
 done <<< "$model_ids"
+print_direct_responses_examples "$project" "$service_name" "$key_path" "$model_ids"
 printf 'Press Ctrl-C to stop.\n'
 
 exec "${port_forward_command[@]}"
