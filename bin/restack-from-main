@@ -1,0 +1,101 @@
+#!/usr/bin/env -S uv run --script
+# Print commands that would restack the current branch's local ancestry.
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["typer"]
+# ///
+
+import shlex
+import sys
+
+import typer
+
+from python import select_git_branch_tree_rows as branch_tree
+
+
+def current_branch_index(rows):
+    current_indices = [index for index, row in enumerate(rows) if row["marker"] == "*"]
+    if len(current_indices) != 1:
+        sys.stderr.write("restack-from-main requires a checked-out local branch\n")
+        sys.exit(1)
+
+    return current_indices[0]
+
+
+def ancestry_to_local_root(rows, parent_indices, current_index):
+    ancestry = []
+    index = current_index
+    seen = set()
+
+    while index is not None:
+        if index in seen:
+            raise RuntimeError(f"branch ancestry cycle at {rows[index]['branch']}")
+
+        seen.add(index)
+        ancestry.append(index)
+
+        if rows[index]["branch"] == "main":
+            return list(reversed(ancestry))
+
+        index = parent_indices[index]
+
+    return list(reversed(ancestry))
+
+
+def print_ancestry(rows, ancestry):
+    main_in_ancestry = rows[ancestry[0]]["branch"] == "main"
+    if not main_in_ancestry:
+        print("main (tip not in ancestry)")
+
+    depth_offset = 0 if main_in_ancestry else 1
+    for depth, index in enumerate(ancestry):
+        display_depth = depth + depth_offset
+        if display_depth == 0:
+            print(branch_tree.visible_branch(rows, index))
+        else:
+            print("   " * (display_depth - 1) + "└─ " + branch_tree.visible_branch(rows, index))
+
+
+def print_script(rows, ancestry, push):
+    print()
+    base_branch = rows[ancestry[0]]["branch"]
+    main_in_ancestry = base_branch == "main"
+    if not main_in_ancestry:
+        print("# main's tip is NOT currently in this branch ancestry, so restack is necessary")
+    print("git checkout main")
+    print("git pull origin main")
+
+    parent_branch = "main"
+    indexes_to_restack = ancestry[1:] if main_in_ancestry else ancestry
+    for index in indexes_to_restack:
+        branch = shlex.quote(rows[index]["branch"])
+        quoted_parent_branch = shlex.quote(parent_branch)
+        print(f"git checkout {branch}")
+        print(f"git merge --no-edit {quoted_parent_branch}")
+        print("# resolve merge conflicts and logical issues due to merge")
+        if push:
+            print("git push origin HEAD")
+        parent_branch = rows[index]["branch"]
+
+
+def main(
+    push: bool = typer.Option(
+        True,
+        "--push/--no-push",
+        "-p/-n",
+        help="Include or omit 'git push origin HEAD' after each merge.",
+    ),
+):
+    """Print the current branch's local ancestry and a restack script without executing it."""
+    rows = branch_tree.local_branch_rows()
+    if not rows:
+        return
+
+    parent_indices = branch_tree.nearest_parent_indices(rows, branch_tree.commit_parent_map())
+    ancestry = ancestry_to_local_root(rows, parent_indices, current_branch_index(rows))
+    print_ancestry(rows, ancestry)
+    print_script(rows, ancestry, push)
+
+
+if __name__ == "__main__":
+    typer.run(main)
