@@ -4,6 +4,9 @@
 gls_require_command fzf || exit
 gls_require_command pbcopy || exit
 
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+picker_header=$("$bin_dir/helpers/fzf_wrap_header" --width-percent 40 --full-width-below 100 'tab: toggle, ctrl-a: select all, enter: copy branches, ctrl-c: cancel') || exit
+
 current_user=$(gls_gitlab_username 2>/dev/null || true)
 mrs=$(GLS_FZF_FORMAT=1 GLS_CURRENT_USER="$current_user" gli "$@") || exit
 
@@ -13,11 +16,11 @@ selected=$(printf '%s\n' "$mrs" | \
   fzf --ansi \
     --multi \
     --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND" \
-    --preview-window='right:60%:wrap' \
+    --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)' \
     --no-mouse \
     --delimiter=$'\t' \
     --with-nth=2 \
-    --header='tab: toggle, ctrl-a: select all, enter: copy branches, ctrl-c: cancel' \
+    --header="$picker_header" \
     --bind="ctrl-a:select-all,alt-enter:accept,alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up")
 fzf_status=$?
 

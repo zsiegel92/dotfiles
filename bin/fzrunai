@@ -3,6 +3,8 @@
 
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FZF_WRAP_HEADER="$SCRIPT_DIR/helpers/fzf_wrap_header"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fzrunai"
 API_KEYS_DIR="$CONFIG_DIR/api-keys"
 DEFAULT_LOCAL_PORT="${RUNAI_FZF_LOCAL_PORT:-18001}"
@@ -273,15 +275,34 @@ fzf_toggle_actions() {
 
   case "$prompt" in
     'inference>')
-      printf 'reload(%s --list-rows --include-non-inference)+change-prompt(all>)+change-header(service  project  type  status  running-pods | all workloads | enter: forward, ctrl-i: inference only, ctrl-a: set API key, esc: cancel)+refresh-preview\n' "$quoted_script_path"
+      printf 'reload(%s --list-rows --include-non-inference)+change-prompt(all>)+transform-header(%s --fzf-header all)+refresh-preview\n' "$quoted_script_path" "$quoted_script_path"
       ;;
     'all>')
-      printf 'reload(%s --list-rows)+change-prompt(inference>)+change-header(service  project  type  status  running-pods | inference only | enter: forward, ctrl-i: show all workloads, ctrl-a: set API key, esc: cancel)+refresh-preview\n' "$quoted_script_path"
+      printf 'reload(%s --list-rows)+change-prompt(inference>)+transform-header(%s --fzf-header inference)+refresh-preview\n' "$quoted_script_path" "$quoted_script_path"
       ;;
     *)
       die 'invalid fzf mode'
       ;;
   esac
+}
+
+fzf_header() {
+  local mode="$1"
+  local header
+
+  case "$mode" in
+    all|all\>)
+      header='service  project  type  status  running-pods | all workloads | enter: forward, ctrl-i: inference only, ctrl-a: set API key, esc: cancel'
+      ;;
+    inference|inference\>)
+      header='service  project  type  status  running-pods | inference only | enter: forward, ctrl-i: show all workloads, ctrl-a: set API key, esc: cancel'
+      ;;
+    *)
+      die 'invalid fzf mode'
+      ;;
+  esac
+
+  "$FZF_WRAP_HEADER" --width-percent 40 --full-width-below 100 "$header"
 }
 
 extract_model_ids() {
@@ -463,6 +484,11 @@ while [ "$#" -gt 0 ]; do
       fzf_toggle_actions "$2"
       exit
       ;;
+    --fzf-header)
+      [ "$#" -eq 2 ] || die 'invalid internal fzf header invocation'
+      fzf_header "$2"
+      exit
+      ;;
     -h|--help)
       usage
       exit
@@ -501,10 +527,10 @@ set_api_key_command="$quoted_script_path --prompt-api-key {2}"
 
 if [ "$include_non_inference" = true ]; then
   initial_prompt='all>'
-  toggle_header='service  project  type  status  running-pods | all workloads | enter: forward, ctrl-i: inference only, ctrl-a: set API key, esc: cancel'
+  toggle_header=$(fzf_header all) || exit
 else
   initial_prompt='inference>'
-  toggle_header='service  project  type  status  running-pods | inference only | enter: forward, ctrl-i: show all workloads, ctrl-a: set API key, esc: cancel'
+  toggle_header=$(fzf_header inference) || exit
 fi
 
 selected=$(printf '%s\n' "$SERVICE_ROWS" | fzf \
@@ -513,8 +539,8 @@ selected=$(printf '%s\n' "$SERVICE_ROWS" | fzf \
   --prompt="$initial_prompt" \
   --header="$toggle_header" \
   --preview="$preview_command" \
-  --preview-window='right:60%:wrap' \
-  --bind="ctrl-a:execute($set_api_key_command)+refresh-preview,ctrl-i:transform($quoted_script_path --fzf-toggle-actions {fzf:prompt}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down" \
+  --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)' \
+  --bind="ctrl-a:execute($set_api_key_command)+refresh-preview,ctrl-i:transform($quoted_script_path --fzf-toggle-actions {fzf:prompt}),resize:transform-header($quoted_script_path --fzf-header {fzf:prompt}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down" \
   --no-mouse) || exit $?
 
 [ -n "$selected" ] || die 'no service selected'

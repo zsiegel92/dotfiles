@@ -79,6 +79,7 @@ shift $((OPTIND - 1))
 dir="${1:-.}"
 
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+wrap_header_helper="${script_path%/*}/fzf_wrap_header"
 query=""
 mode="filename"
 selected_path=""
@@ -121,6 +122,7 @@ run_picker() {
 
   if [ "$mode" = "content" ]; then
     header='enter: select, ctrl-a: filename search, alt-up/down and page-up/down: scroll preview'
+    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
     prompt='text> '
     filter_command="FZRECENT_DIR=$(shell_quote "$dir") FZRECENT_DEPTH=$(shell_quote "$depth") $(shell_quote "$script_path") --content-filter"
     picker_output=$(content_filter_recent_files "$query" | fzf \
@@ -136,13 +138,14 @@ run_picker() {
       --with-nth=1,2 \
       --prompt="$prompt" \
       --header="$header" \
-      --preview-window=right:60% \
+      --preview-window='right,60%,<100(down,50%,border-top)' \
       --bind "$scroll_bindings" \
       --bind "ctrl-a:print($toggle_marker)+accept" \
       --bind "change:reload:$filter_command {q}" \
       --preview "$preview_command")
   else
     header='enter: select, ctrl-a: search file text, alt-up/down and page-up/down: scroll preview'
+    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
     prompt='files> '
     picker_output=$(list_recent_files | fzf \
       --query="$query" \
@@ -156,7 +159,7 @@ run_picker() {
       --with-nth=1,2 \
       --prompt="$prompt" \
       --header="$header" \
-      --preview-window=right:60% \
+      --preview-window='right,60%,<100(down,50%,border-top)' \
       --bind "$scroll_bindings" \
       --bind "ctrl-a:print($toggle_marker)+accept" \
       --preview "$preview_command")

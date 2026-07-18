@@ -2,6 +2,7 @@
 # Browse the tracked file tree and open a selected file in VS Code.
 
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+FZF_WRAP_HEADER="${SELF%/*}/helpers/fzf_wrap_header"
 
 usage() {
     cat <<'EOF'
@@ -326,6 +327,7 @@ write_state "$state_file"
 
 quoted_self=${(q)SELF}
 quoted_state=${(q)state_file}
+picker_header=$("$FZF_WRAP_HEADER" --width-percent 45 --full-width-below 100 'enter: open/enter · ctrl-e: up · ctrl-r: recursion · ctrl-f: repo path · ctrl-v: start path · ctrl-x/ctrl-s: copy start/repo path') || exit
 selected=$(list_entries "$state_file" | fzf \
     --no-mouse \
     --no-sort \
@@ -334,10 +336,10 @@ selected=$(list_entries "$state_file" | fzf \
     --border \
     --delimiter=$'\t' \
     --with-nth=4.. \
-    --header 'enter: open/enter · ctrl-e: up · ctrl-r: recursion · ctrl-f: repo path · ctrl-v: start path · ctrl-x/ctrl-s: copy start/repo path' \
+    --header "$picker_header" \
     --list-label "$view_mode, $display_mode style" \
     --preview-label 'file or directory preview' \
-    --preview-window 'right,55%,border-left,nowrap' \
+    --preview-window 'right,55%,border-left,nowrap,<100(down,50%,border-top,nowrap)' \
     --bind 'alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down' \
     --bind "enter:transform($quoted_self --enter $quoted_state {3} {1})" \
     --bind "ctrl-e:transform($quoted_self --up $quoted_state)" \

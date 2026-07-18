@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Repeatedly fuzzy-pick a GitLab MR (from `gli`) and open it in the browser.
 # Accepts the same flags as gli (e.g. -r, --all, --done).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FZF_WRAP_HEADER="$SCRIPT_DIR/helpers/fzf_wrap_header"
+
 fzgl_help() {
   cat <<'EOF'
 Usage: fzgl [-g] [gli-filter]
@@ -166,10 +169,11 @@ fzgl_select_mr() {
   local rows="$1"
   local header="$2"
   local view_mode="$3"
+  header=$("$FZF_WRAP_HEADER" --width-percent 40 --full-width-below 100 "$header") || return
   local fzf_args=(
     --ansi
     --preview "$GLS_VIEW_MR_USING_CACHE_COMMAND"
-    --preview-window='right:60%:wrap'
+    --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)'
     --no-mouse
     --delimiter=$'\t'
     --with-nth=2

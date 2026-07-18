@@ -72,6 +72,7 @@ gls_require_command fzf || exit
 bin_dir="$(cd "$(dirname "$0")" && pwd)"
 preview_helper="$bin_dir/helpers/clean_local_branches_preview"
 open_helper="$bin_dir/helpers/clean_local_branches_open_mr"
+wrap_header_helper="$bin_dir/helpers/fzf_wrap_header"
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "clean-local-branches: not inside a git repository" >&2
@@ -198,6 +199,8 @@ while true; do
     continue
   fi
 
+  picker_header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "tab: select, enter: git branch -D selected, ctrl-o: open MR, ctrl-a: toggle no-MR branches ($mode_label)") || exit
+
   selected=$(
     printf '%s\n' "$active_rows" |
       fzf \
@@ -214,8 +217,8 @@ while true; do
         --wrap \
         --delimiter=$'\t' \
         --with-nth=2 \
-        --preview-window='right:60%:wrap' \
-        --header="tab: select, enter: git branch -D selected, ctrl-o: open MR, ctrl-a: toggle no-MR branches ($mode_label)" \
+        --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)' \
+        --header="$picker_header" \
         --bind="ctrl-o:execute-silent($open_helper {}),alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
         --preview="$preview_helper {}"
   )

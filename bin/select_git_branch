@@ -3,6 +3,7 @@
 # Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [query]
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "$0")"
+FZF_WRAP_HEADER="$SCRIPT_DIR/helpers/fzf_wrap_header"
 
 if [ "$1" = "--switch-stay-branch" ]; then
   branch="$2"
@@ -93,6 +94,8 @@ select_git_branch_fzf() {
   local preview_scope="$5"
   local switch_stay_bind="$6"
   local preview_command
+
+  header=$("$FZF_WRAP_HEADER" "$header") || return
 
   if [ "$view_mode" = tree ]; then
     preview_command="'$SELECT_GIT_BRANCH_TREE_ROWS' --diff-preview --tree {1}"

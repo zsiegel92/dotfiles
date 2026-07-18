@@ -62,6 +62,7 @@ EOF
 fi
 
 fzf_query="$*"
+picker_header=$("$HELPERS/fzf_wrap_header" --width-percent 50 --full-width-below 100 'enter: side-by-side diff · ctrl-d: code --diff (HEAD vs working)') || exit
 
 while true; do
     changed_files=$("$HELPERS/gscode_changed_files")
@@ -76,7 +77,8 @@ while true; do
         --ansi \
         --border \
         --wrap \
-        --header $'enter: side-by-side diff · ctrl-d: code --diff (HEAD vs working)' \
+        --header "$picker_header" \
+        --preview-window 'right,50%,wrap,<100(down,50%,border-top,wrap)' \
         --bind alt-up:preview-up,alt-down:preview-down \
         --bind "ctrl-d:execute(\"$SELF\" --diff-file {})" \
         --preview 'if git ls-files --error-unmatch -- {} >/dev/null 2>&1; then git diff --color=always -- {}; elif [ -f {} ]; then if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain -- {}; else cat -- {}; fi; fi')

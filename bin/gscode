@@ -11,10 +11,6 @@
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 GPARENT="$(cd "$(dirname "$0")" && pwd)/gparent"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-HUNK_PAGER_LEGEND='↑↓/jk scroll · Space/b page · n/N hunks · g/G ends · q back; then Esc quit'
-HUNK_PAGER="less -R -Ps'$HUNK_PAGER_LEGEND' -Pm'$HUNK_PAGER_LEGEND' -PM'$HUNK_PAGER_LEGEND'"
-FILE_PAGER_LEGEND='↑↓/jk scroll · Space/b page · g/G ends · q back; then Esc quit'
-FILE_PAGER="less -R -Ps'$FILE_PAGER_LEGEND' -Pm'$FILE_PAGER_LEGEND' -PM'$FILE_PAGER_LEGEND'"
 
 usage() {
     cat <<'EOF'
@@ -127,7 +123,7 @@ preview_file_side_by_side() {
 }
 
 page_file_side_by_side() {
-    local base_ref f cols
+    local base_ref f cols hunk_pager_legend hunk_pager file_pager_legend file_pager
     base_ref="$1"
     f="$2"
     [ -z "$f" ] && return 0
@@ -144,15 +140,34 @@ page_file_side_by_side() {
     [ -z "$cols" ] && cols=200
     export COLUMNS="$cols"
 
+    if [ "$cols" -ge 76 ]; then
+        hunk_pager_legend='↑↓/jk scroll · Space/b page · n/N hunks · g/G ends · q back; then Esc quit'
+        file_pager_legend='↑↓/jk scroll · Space/b page · g/G ends · q back; then Esc quit'
+    elif [ "$cols" -ge 60 ]; then
+        hunk_pager_legend='↑↓/jk scroll · Sp/b page · n/N hunk · g/G ends · q→Esc quit'
+        file_pager_legend='↑↓/jk scroll · Sp/b page · g/G ends · q→Esc quit'
+    elif [ "$cols" -ge 44 ]; then
+        hunk_pager_legend='↑↓/jk scroll · n/N hunk · q→Esc quit'
+        file_pager_legend='↑↓/jk scroll · Sp/b page · q→Esc quit'
+    elif [ "$cols" -ge 24 ]; then
+        hunk_pager_legend='jk scroll · q→Esc quit'
+        file_pager_legend="$hunk_pager_legend"
+    else
+        hunk_pager_legend='q→Esc quit'
+        file_pager_legend="$hunk_pager_legend"
+    fi
+    hunk_pager="less -R -Ps'$hunk_pager_legend' -Pm'$hunk_pager_legend' -PM'$hunk_pager_legend'"
+    file_pager="less -R -Ps'$file_pager_legend' -Pm'$file_pager_legend' -PM'$file_pager_legend'"
+
     if [ -n "$base_ref" ]; then
-        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$HUNK_PAGER"
+        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$hunk_pager"
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$HUNK_PAGER"
+        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$hunk_pager"
     elif [ -f "$f" ]; then
         if command -v bat >/dev/null 2>&1; then
-            bat --color=always --paging=always --pager "$FILE_PAGER" --style=numbers --terminal-width="$cols" -- "$f"
+            bat --color=always --paging=always --pager "$file_pager" --style=numbers --terminal-width="$cols" -- "$f"
         else
-            less -R "-Ps$FILE_PAGER_LEGEND" "-Pm$FILE_PAGER_LEGEND" "-PM$FILE_PAGER_LEGEND" -- "$f"
+            less -R "-Ps$file_pager_legend" "-Pm$file_pager_legend" "-PM$file_pager_legend" -- "$f"
         fi
     fi
 }
@@ -190,9 +205,9 @@ preview_toggle_actions() {
     fi
 
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-        print -r -- "change-preview-window[right,50%,border-left,wrap]+change-preview[$unified_preview]+change-preview-label[unified diff]"
+        print -r -- "change-preview-window[right,50%,border-left,wrap,<100(down,70%,border-top,wrap)]+change-preview[$unified_preview]+change-preview-label[unified diff]"
     else
-        print -r -- "change-preview-window[down,70%,border-top,nowrap]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]"
+        print -r -- "change-preview-window[down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]"
     fi
 }
 
@@ -392,12 +407,14 @@ fi
 if [ "$start_side_by_side" -eq 1 ]; then
     preview_cmd="$side_by_side_preview_cmd"
     preview_label="side-by-side hunks"
-    preview_window="down,70%,border-top,nowrap"
+    preview_window="down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)"
 else
     preview_cmd="$unified_preview_cmd"
     preview_label="unified diff"
-    preview_window="right,50%,border-left,wrap"
+    preview_window="right,50%,border-left,wrap,<100(down,70%,border-top,wrap)"
 fi
+
+header=$("$HELPERS/fzf_wrap_header" --width-percent 50 --full-width-below 100 "$header") || exit
 
 while true; do
     selected_filename=$(printf '%s\n' "$changed_files" | fzf \

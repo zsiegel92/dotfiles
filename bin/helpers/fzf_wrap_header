@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Wrap an fzf header to the usable width of its list pane.
+
+set -u
+
+width_percent=100
+full_width_below=0
+while [ "$#" -gt 1 ]; do
+  case "$1" in
+    --width-percent)
+      width_percent="$2"
+      shift 2
+      ;;
+    --full-width-below)
+      full_width_below="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+[ "$#" -eq 1 ] || {
+  echo "Usage: fzf_wrap_header [--width-percent PERCENT] [--full-width-below COLUMNS] HEADER" >&2
+  exit 2
+}
+
+case "$width_percent" in
+  ''|*[!0-9]*)
+    echo "fzf_wrap_header: PERCENT must be an integer from 1 to 100" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$width_percent" -lt 1 ] || [ "$width_percent" -gt 100 ]; then
+  echo "fzf_wrap_header: PERCENT must be an integer from 1 to 100" >&2
+  exit 2
+fi
+
+case "$full_width_below" in
+  ''|*[!0-9]*)
+    echo "fzf_wrap_header: COLUMNS must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
+
+columns=${FZF_COLUMNS:-}
+case "$columns" in
+  ''|*[!0-9]*) columns= ;;
+esac
+
+if [ -z "$columns" ]; then
+  columns=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
+fi
+if [ -z "$columns" ]; then
+  columns=$(tput cols 2>/dev/null)
+fi
+case "$columns" in
+  ''|*[!0-9]*) columns=80 ;;
+esac
+
+if [ "$full_width_below" -gt 0 ] && [ "$columns" -lt "$full_width_below" ]; then
+  width_percent=100
+fi
+
+# Leave room for fzf's outer border and the separator beside a right-side preview.
+wrap_width=$((columns * width_percent / 100 - 8))
+[ "$wrap_width" -lt 8 ] && wrap_width=8
+
+printf '%s\n' "$1" | fold -s -w "$wrap_width" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'

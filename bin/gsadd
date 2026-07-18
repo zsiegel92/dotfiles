@@ -4,7 +4,7 @@
 # Usage: gsadd [query]
 fzf_query="$*"
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
-local staged_output changed_output fzf_input selected_output fzf_status file repo_root
+local staged_output changed_output fzf_input selected_output fzf_status file repo_root picker_header
 local has_staged=0
 local -a staged_files changed_files all_files selected_files files_to_add files_to_reset
 local -A staged_map selected_map seen_files
@@ -32,6 +32,8 @@ done
 
 [ "${#all_files[@]}" -gt 0 ] || return
 
+picker_header=$("$HELPERS/fzf_wrap_header" --width-percent 50 --full-width-below 100 'tab: toggle, ctrl-a: select all, alt-enter/enter: apply, ctrl-c: cancel') || return
+
 fzf_input=$(
     for file in "${all_files[@]}"; do
         if [ -n "${staged_map[$file]}" ]; then
@@ -54,7 +56,8 @@ selected_output=$(printf '%s\n' "$fzf_input" | GSADD_HAS_STAGED="$has_staged" FZ
     --multi \
     --sync \
     --delimiter '\t' \
-    --header 'tab: toggle, ctrl-a: select all, alt-enter/enter: apply, ctrl-c: cancel' \
+    --header "$picker_header" \
+    --preview-window 'right,50%,wrap,<100(down,50%,border-top,wrap)' \
     --bind 'start:select-all+transform-query:printf %s "$FZF_GSADD_QUERY"' \
     --bind alt-up:preview-up,alt-down:preview-down \
     --bind "ctrl-a:select-all,enter,alt-enter:become(sh -c 'if [ \"\$FZF_SELECT_COUNT\" -gt 0 ] || [ \"\$GSADD_HAS_STAGED\" != 1 ]; then cut -f2- \"\$1\"; fi' sh {+f})" \
