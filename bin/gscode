@@ -11,6 +11,10 @@
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 GPARENT="$(cd "$(dirname "$0")" && pwd)/gparent"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+HUNK_PAGER_LEGEND='↑↓/jk scroll · Space/b page · n/N hunks · g/G ends · q back; then Esc quit'
+HUNK_PAGER="less -R -Ps'$HUNK_PAGER_LEGEND' -Pm'$HUNK_PAGER_LEGEND' -PM'$HUNK_PAGER_LEGEND'"
+FILE_PAGER_LEGEND='↑↓/jk scroll · Space/b page · g/G ends · q back; then Esc quit'
+FILE_PAGER="less -R -Ps'$FILE_PAGER_LEGEND' -Pm'$FILE_PAGER_LEGEND' -PM'$FILE_PAGER_LEGEND'"
 
 usage() {
     cat <<'EOF'
@@ -44,10 +48,14 @@ Keys:
   Ctrl-S      toggle unified and side-by-side hunk previews
   Esc         return to the unified preview from side-by-side mode; otherwise exit
 
-Interactive hunk pager:
-  n            jump to the next hunk
-  N            jump to the previous hunk
-  q            return to the fzf picker
+Interactive side-by-side view (press Enter from the side-by-side preview):
+  Up/Down, j/k scroll one line
+  Space/b      page forward/backward
+  n/N          jump to the next/previous hunk
+  g/G          jump to the beginning/end
+  q            close the view and return to the fzf picker
+
+This is a read-only pager, not an editor: there are no Vim-like modes to toggle, and the keys above work immediately. To quit gscode entirely from this view, press q to return to the picker, then Esc.
 
 In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb.
 EOF
@@ -137,14 +145,14 @@ page_file_side_by_side() {
     export COLUMNS="$cols"
 
     if [ -n "$base_ref" ]; then
-        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "less -R"
+        git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$HUNK_PAGER"
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "less -R"
+        git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$HUNK_PAGER"
     elif [ -f "$f" ]; then
         if command -v bat >/dev/null 2>&1; then
-            bat --color=always --paging=always --style=numbers --terminal-width="$cols" -- "$f"
+            bat --color=always --paging=always --pager "$FILE_PAGER" --style=numbers --terminal-width="$cols" -- "$f"
         else
-            less -R -- "$f"
+            less -R "-Ps$FILE_PAGER_LEGEND" "-Pm$FILE_PAGER_LEGEND" "-PM$FILE_PAGER_LEGEND" -- "$f"
         fi
     fi
 }
