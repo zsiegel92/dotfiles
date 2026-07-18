@@ -6,6 +6,8 @@
 # Usage: fzrecent [-d depth] [-f] [dir=.]
 #   -d depth  limit recursion to <depth> directory levels (default: infinite)
 #   -f        only files in the immediate directory (equivalent to -d 1)
+# Set FZRECENT_OPEN_STAY_COMMAND to a shell-quoted command prefix to enable an
+# open-without-closing-fzf shortcut. The selected path is appended to it.
 usage() {
   echo "usage: fzrecent [-d depth] [-f] [dir=.]" >&2
 }
@@ -68,6 +70,83 @@ if [ "$1" = "--content-filter" ]; then
   exit
 fi
 
+adjust_selector_action() {
+  local direction="$1" total_size selector_size preview_size step min_selector_size min_preview_size orientation border fallback header_columns helper_path quoted_header quoted_helper
+
+  case "$direction" in
+    decrease|increase) ;;
+    *) return 2 ;;
+  esac
+
+  case "${FZF_PREVIEW_LEFT:-}" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  case "${FZF_PREVIEW_COLUMNS:-}" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  case "${FZF_PREVIEW_LINES:-}" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  case "${FZF_COLUMNS:-}" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+
+  if [ "$FZF_PREVIEW_LEFT" -gt 0 ]; then
+    total_size="$FZF_COLUMNS"
+    selector_size=$((total_size - FZF_PREVIEW_COLUMNS))
+    min_selector_size=5
+    min_preview_size=20
+    orientation=right
+    border=border-left
+    fallback='<100(down,50%,border-top,wrap)'
+  else
+    case "${FZF_LINES:-}" in
+      ''|*[!0-9]*) return 0 ;;
+    esac
+    total_size="$FZF_LINES"
+    selector_size=$((total_size - FZF_PREVIEW_LINES))
+    min_selector_size=1
+    min_preview_size=5
+    orientation=down
+    border=border-top
+  fi
+
+  [ "$total_size" -gt $((min_selector_size + min_preview_size)) ] || return 0
+
+  step=$((total_size / 20))
+  [ "$step" -lt 1 ] && step=1
+  if [ "$direction" = "decrease" ]; then
+    selector_size=$((selector_size - step))
+  else
+    selector_size=$((selector_size + step))
+  fi
+  [ "$selector_size" -lt "$min_selector_size" ] && selector_size="$min_selector_size"
+  [ "$selector_size" -gt $((total_size - min_preview_size)) ] && selector_size=$((total_size - min_preview_size))
+  preview_size=$((total_size - selector_size))
+
+  if [ "$orientation" = "down" ]; then
+    fallback="<100(down,$preview_size,border-top,wrap)"
+    header_columns="$FZF_COLUMNS"
+  else
+    header_columns="$selector_size"
+  fi
+
+  if [ -z "${FZRECENT_HEADER:-}" ]; then
+    printf 'change-preview-window[%s,%s,%s,wrap,%s]\n' "$orientation" "$preview_size" "$border" "$fallback"
+    return
+  fi
+
+  helper_path="$(cd "$(dirname "$0")" && pwd)/fzf_wrap_header"
+  printf -v quoted_header '%q' "$FZRECENT_HEADER"
+  printf -v quoted_helper '%q' "$helper_path"
+  printf 'change-preview-window[%s,%s,%s,wrap,%s]+transform-header[FZF_COLUMNS=%s %s --width-percent 100 --full-width-below 0 %s]\n' "$orientation" "$preview_size" "$border" "$fallback" "$header_columns" "$quoted_helper" "$quoted_header"
+}
+
+if [ "$1" = "--adjust-selector" ]; then
+  adjust_selector_action "$2"
+  exit $?
+fi
+
 while getopts "d:f" opt; do
   case "$opt" in
     d) depth="$OPTARG" ;;
@@ -86,10 +165,28 @@ selected_path=""
 toggle_marker="__fzrecent_toggle_content_search__"
 preview_command='if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain --wrap=character ${FZF_PREVIEW_COLUMNS:+--terminal-width="$FZF_PREVIEW_COLUMNS"} -- {3}; else cat -- {3}; fi'
 scroll_bindings='alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down'
+open_stay_command="${FZRECENT_OPEN_STAY_COMMAND:-}"
+open_stay_key_label=""
+open_stay_bind=""
 
 shell_quote() {
   printf '%q' "$1"
 }
+
+if [ -n "$open_stay_command" ]; then
+  if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/null 2>&1; then
+    open_stay_key_label="ctrl-enter"
+    open_stay_bind="ctrl-enter:execute-silent($open_stay_command {3})"
+  else
+    open_stay_key_label="alt-enter"
+    open_stay_bind="alt-enter:execute-silent($open_stay_command {3})"
+  fi
+fi
+
+scroll_bindings+=',pgup:preview-page-up,pgdn:preview-page-down'
+adjust_selector_command="$(shell_quote "$script_path") --adjust-selector"
+scroll_bindings+=",ctrl-j:transform($adjust_selector_command decrease),ctrl-k:transform($adjust_selector_command increase)"
+[ -n "$open_stay_bind" ] && scroll_bindings+=",$open_stay_bind"
 
 parse_picker_output() {
   local picker_output="$1"
@@ -121,17 +218,17 @@ run_picker() {
   local picker_output picker_status parse_status filter_command header prompt
 
   if [ "$mode" = "content" ]; then
-    header='enter: select, ctrl-a: filename search, alt-up/down and page-up/down: scroll preview'
-    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
+    header="enter: select · ctrl-a: filename search${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
     prompt='text> '
     filter_command="FZRECENT_DIR=$(shell_quote "$dir") FZRECENT_DEPTH=$(shell_quote "$depth") $(shell_quote "$script_path") --content-filter"
+    export FZRECENT_HEADER="$header"
+    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
     picker_output=$(content_filter_recent_files "$query" | fzf \
       --disabled \
       --query="$query" \
       --print-query \
       --no-sort \
       --no-mouse \
-      --height 90% \
       --ansi \
       --delimiter='\t' \
       --tabstop=1 \
@@ -144,15 +241,15 @@ run_picker() {
       --bind "change:reload:$filter_command {q}" \
       --preview "$preview_command")
   else
-    header='enter: select, ctrl-a: search file text, alt-up/down and page-up/down: scroll preview'
-    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
+    header="enter: select · ctrl-a: search file text${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
     prompt='files> '
+    export FZRECENT_HEADER="$header"
+    header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
     picker_output=$(list_recent_files | fzf \
       --query="$query" \
       --print-query \
       --no-sort \
       --no-mouse \
-      --height 90% \
       --ansi \
       --delimiter='\t' \
       --tabstop=1 \
