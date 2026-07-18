@@ -247,7 +247,7 @@ preview_toggle_actions() {
 }
 
 fzf_header() {
-    local layout="$1" header="$2" width_percent
+    local layout="$1" header="$2" width_percent full_width_below
 
     if [ "$layout" = "current" ]; then
         if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
@@ -260,9 +260,12 @@ fzf_header() {
     case "$layout" in
         right)
             width_percent=50
+            # The preview's <100(...) fallback is based on the width of the 50% preview pane, so it switches to the stacked layout below 200 terminal columns.
+            full_width_below=200
             ;;
         stacked)
             width_percent=100
+            full_width_below=0
             ;;
         *)
             echo "gscode: invalid fzf header layout: $layout" >&2
@@ -270,7 +273,7 @@ fzf_header() {
             ;;
     esac
 
-    "$HELPERS/fzf_wrap_header" --width-percent "$width_percent" --full-width-below 100 "$header"
+    "$HELPERS/fzf_wrap_header" --width-percent "$width_percent" --full-width-below "$full_width_below" "$header"
 }
 
 open_diff_file() {
