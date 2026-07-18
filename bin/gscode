@@ -5,6 +5,7 @@
 # Keys in the picker:
 #   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
 #   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
+#   Ctrl-H   open the selected file with `hunk diff`
 #   Ctrl-D   open the selected file in `code --diff`
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
 
@@ -40,18 +41,23 @@ Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side p
 Keys:
   Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
   Open+stay   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter
+  Ctrl-H      open the selected file with hunk diff
   Ctrl-D      open the selected file in code --diff
   Ctrl-S      toggle unified and side-by-side hunk previews
   Esc         return to the unified preview from side-by-side mode; otherwise exit
 
-Interactive side-by-side view (press Enter from the side-by-side preview):
+Hunk diff view (press Ctrl-H from either preview):
+  Use Hunk's own review controls
+  Ctrl-C        close Hunk and return to the gscode picker
+
+Interactive side-by-side pager (press Enter from the side-by-side preview):
   Up/Down, j/k scroll one line
   Space/b      page forward/backward
   n/N          jump to the next/previous hunk
   g/G          jump to the beginning/end
-  q            close the view and return to the fzf picker
+  q/Ctrl-C     close the view and return to the fzf picker
 
-This is a read-only pager, not an editor: there are no Vim-like modes to toggle, and the keys above work immediately. To quit gscode entirely from this view, press q to return to the picker, then Esc.
+Closing either nested view restores the gscode picker. To quit gscode entirely, return to the picker and press Esc.
 
 In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb.
 EOF
@@ -123,7 +129,7 @@ preview_file_side_by_side() {
 }
 
 page_file_side_by_side() {
-    local base_ref f cols hunk_pager_legend hunk_pager file_pager_legend file_pager
+    local base_ref f cols hunk_pager_legend hunk_pager file_pager_legend file_pager tty_state
     base_ref="$1"
     f="$2"
     [ -z "$f" ] && return 0
@@ -141,23 +147,32 @@ page_file_side_by_side() {
     export COLUMNS="$cols"
 
     if [ "$cols" -ge 76 ]; then
-        hunk_pager_legend='↑↓/jk scroll · Space/b page · n/N hunks · g/G ends · q back; then Esc quit'
-        file_pager_legend='↑↓/jk scroll · Space/b page · g/G ends · q back; then Esc quit'
+        hunk_pager_legend='↑↓/jk scroll · Space/b page · n/N hunks · g/G ends · q/Ctrl-C back'
+        file_pager_legend='↑↓/jk scroll · Space/b page · g/G ends · q/Ctrl-C back'
     elif [ "$cols" -ge 60 ]; then
-        hunk_pager_legend='↑↓/jk scroll · Sp/b page · n/N hunk · g/G ends · q→Esc quit'
-        file_pager_legend='↑↓/jk scroll · Sp/b page · g/G ends · q→Esc quit'
+        hunk_pager_legend='↑↓/jk scroll · Sp/b page · n/N hunk · g/G ends · q/Ctrl-C back'
+        file_pager_legend='↑↓/jk scroll · Sp/b page · g/G ends · q/Ctrl-C back'
     elif [ "$cols" -ge 44 ]; then
-        hunk_pager_legend='↑↓/jk scroll · n/N hunk · q→Esc quit'
-        file_pager_legend='↑↓/jk scroll · Sp/b page · q→Esc quit'
+        hunk_pager_legend='↑↓/jk scroll · n/N hunk · q/^C back'
+        file_pager_legend='↑↓/jk scroll · Sp/b page · q/^C back'
     elif [ "$cols" -ge 24 ]; then
-        hunk_pager_legend='jk scroll · q→Esc quit'
+        hunk_pager_legend='jk scroll · q/^C back'
         file_pager_legend="$hunk_pager_legend"
     else
-        hunk_pager_legend='q→Esc quit'
+        hunk_pager_legend='q/^C back'
         file_pager_legend="$hunk_pager_legend"
     fi
-    hunk_pager="less -R -Ps'$hunk_pager_legend' -Pm'$hunk_pager_legend' -PM'$hunk_pager_legend'"
-    file_pager="less -R -Ps'$file_pager_legend' -Pm'$file_pager_legend' -PM'$file_pager_legend'"
+    hunk_pager="less -R --lesskey-content='#command;^C quit' -Ps'$hunk_pager_legend' -Pm'$hunk_pager_legend' -PM'$hunk_pager_legend'"
+    file_pager="less -R --lesskey-content='#command;^C quit' -Ps'$file_pager_legend' -Pm'$file_pager_legend' -PM'$file_pager_legend'"
+
+    # fzf and its execute() child share a foreground process group, so a
+    # terminal-generated SIGINT would close both screens. While the pager is
+    # active, make Ctrl-C a regular input byte handled by the less binding
+    # above, then restore the exact terminal state before fzf redraws.
+    tty_state=$(stty -g < /dev/tty 2>/dev/null)
+    if [ -n "$tty_state" ]; then
+        stty intr undef < /dev/tty 2>/dev/null
+    fi
 
     if [ -n "$base_ref" ]; then
         git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$hunk_pager"
@@ -167,8 +182,40 @@ page_file_side_by_side() {
         if command -v bat >/dev/null 2>&1; then
             bat --color=always --paging=always --pager "$file_pager" --style=numbers --terminal-width="$cols" -- "$f"
         else
-            less -R "-Ps$file_pager_legend" "-Pm$file_pager_legend" "-PM$file_pager_legend" -- "$f"
+            less -R --lesskey-content='#command;^C quit' "-Ps$file_pager_legend" "-Pm$file_pager_legend" "-PM$file_pager_legend" -- "$f"
         fi
+    fi
+
+    if [ -n "$tty_state" ]; then
+        stty "$tty_state" < /dev/tty 2>/dev/null
+    fi
+}
+
+open_hunk_diff() {
+    local base_ref f
+    local -a hunk_command
+    base_ref="$1"
+    f="$2"
+    [ -z "$f" ] && return 0
+
+    if ! command -v hunk >/dev/null 2>&1; then
+        echo "Hunk diff view requires hunk (https://github.com/modem-dev/hunk)." >&2
+        return 1
+    fi
+
+    hunk_command=(hunk diff)
+    if [ -n "$base_ref" ]; then
+        hunk_command+=("$base_ref")
+    fi
+    hunk_command+=(-- "$f")
+
+    # Hunk's Bun runtime cannot initialize its TTY streams from an fzf
+    # execute() child on macOS. Give it a fresh pseudo-terminal; script passes
+    # all input and rendering through to the controlling terminal.
+    if command -v script >/dev/null 2>&1; then
+        script -q /dev/null "${hunk_command[@]}" < /dev/tty > /dev/tty 2>&1
+    else
+        "${hunk_command[@]}" < /dev/tty > /dev/tty 2>&1
     fi
 }
 
@@ -255,7 +302,7 @@ if [ "$1" = "--preview-file" ]; then
 fi
 
 # Internal: invoked by the fzf side-by-side preview and its mode-specific bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -270,6 +317,9 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             ;;
         --page-side-by-side)
             page_file_side_by_side "$base_ref" "$1"
+            ;;
+        --hunk-diff)
+            open_hunk_diff "$base_ref" "$1"
             ;;
         --toggle-preview)
             preview_toggle_actions "$base_ref"
@@ -386,8 +436,9 @@ if [ -n "$base_ref" ]; then
     fi
     changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side"
+    header="enter: code · ctrl-h: Hunk diff (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
+    hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref {})"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
     side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
     preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref"
@@ -395,8 +446,9 @@ if [ -n "$base_ref" ]; then
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: code / interactive hunks in side-by-side (n/N, q returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side"
+    header="enter: code · ctrl-h: Hunk diff (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
+    hunk_bind="ctrl-h:execute($quoted_self --hunk-diff {})"
     unified_preview_cmd="$quoted_self --preview-file {}"
     side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
     preview_toggle_cmd="$quoted_self --toggle-preview"
@@ -432,6 +484,7 @@ while true; do
     --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:refresh-preview \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
+    --bind "$hunk_bind" \
     --bind "ctrl-s:transform($preview_toggle_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
