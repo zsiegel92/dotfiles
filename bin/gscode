@@ -226,8 +226,9 @@ enter_preview_action() {
 }
 
 preview_toggle_actions() {
-    local base_ref="$1" quoted_self unified_preview side_by_side_preview
+    local base_ref="$1" header="$2" quoted_self quoted_header unified_preview side_by_side_preview
     quoted_self=${(q)SELF}
+    quoted_header=${(q)header}
 
     if [ -n "$base_ref" ]; then
         local quoted_base_ref=${(q)base_ref}
@@ -239,10 +240,37 @@ preview_toggle_actions() {
     fi
 
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-        print -r -- "change-preview-window[right,50%,border-left,wrap,<100(down,70%,border-top,wrap)]+change-preview[$unified_preview]+change-preview-label[unified diff]"
+        print -r -- "change-preview-window[right,50%,border-left,wrap,<100(down,70%,border-top,wrap)]+change-preview[$unified_preview]+change-preview-label[unified diff]+transform-header[$quoted_self --fzf-header right $quoted_header]"
     else
-        print -r -- "change-preview-window[down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]"
+        print -r -- "change-preview-window[down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]+transform-header[$quoted_self --fzf-header stacked $quoted_header]"
     fi
+}
+
+fzf_header() {
+    local layout="$1" header="$2" width_percent
+
+    if [ "$layout" = "current" ]; then
+        if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
+            layout=stacked
+        else
+            layout=right
+        fi
+    fi
+
+    case "$layout" in
+        right)
+            width_percent=50
+            ;;
+        stacked)
+            width_percent=100
+            ;;
+        *)
+            echo "gscode: invalid fzf header layout: $layout" >&2
+            return 2
+            ;;
+    esac
+
+    "$HELPERS/fzf_wrap_header" --width-percent "$width_percent" --full-width-below 100 "$header"
 }
 
 open_diff_file() {
@@ -288,6 +316,13 @@ if [ "$1" = "--preview-file" ]; then
     exit 0
 fi
 
+# Internal: invoked when fzf needs to rewrap its header.
+if [ "$1" = "--fzf-header" ]; then
+    shift
+    fzf_header "$1" "$2"
+    exit $?
+fi
+
 # Internal: invoked by fzf preview and nested-view bindings.
 if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ]; then
     internal_action="$1"
@@ -309,11 +344,11 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             open_hunk_diff "$base_ref"
             ;;
         --toggle-preview)
-            preview_toggle_actions "$base_ref"
+            preview_toggle_actions "$base_ref" "$1"
             ;;
         --escape-preview)
             if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-                preview_toggle_actions "$base_ref"
+                preview_toggle_actions "$base_ref" "$1"
             else
                 print -r -- abort
             fi
@@ -428,8 +463,6 @@ if [ -n "$base_ref" ]; then
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
     side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
-    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref"
-    preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref"
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
@@ -438,22 +471,32 @@ else
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     unified_preview_cmd="$quoted_self --preview-file {}"
     side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
-    preview_toggle_cmd="$quoted_self --toggle-preview"
-    preview_escape_cmd="$quoted_self --escape-preview"
     preview_enter_cmd="$quoted_self --enter-preview {}"
 fi
+
+quoted_header=${(q)header}
+if [ -n "$base_ref" ]; then
+    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header"
+    preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
+else
+    preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header"
+    preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
+fi
+resize_header_cmd="$quoted_self --fzf-header current $quoted_header"
 
 if [ "$start_side_by_side" -eq 1 ]; then
     preview_cmd="$side_by_side_preview_cmd"
     preview_label="side-by-side hunks"
     preview_window="down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)"
+    header_layout=stacked
 else
     preview_cmd="$unified_preview_cmd"
     preview_label="unified diff"
     preview_window="right,50%,border-left,wrap,<100(down,70%,border-top,wrap)"
+    header_layout=right
 fi
 
-header=$("$HELPERS/fzf_wrap_header" --width-percent 50 --full-width-below 100 "$header") || exit
+header=$(fzf_header "$header_layout" "$header") || exit
 
 while true; do
     selected_filename=$(printf '%s\n' "$changed_files" | fzf \
@@ -468,7 +511,7 @@ while true; do
     --header "$header" \
     --preview-label "$preview_label" \
     --preview-window "$preview_window" \
-    --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:refresh-preview \
+    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:transform-header($resize_header_cmd)+refresh-preview" \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
