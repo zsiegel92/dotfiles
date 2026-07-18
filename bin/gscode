@@ -54,21 +54,38 @@ EOF
 }
 
 preview_file() {
-    local base_ref f
+    local base_ref f cols
     base_ref="$1"
     f="$2"
+    cols="${FZF_PREVIEW_COLUMNS:-}"
     [ -z "$f" ] && return 0
 
     if [ -n "$base_ref" ]; then
-        git diff --color=always "$base_ref"..HEAD -- "$f"
+        git diff --color=always "$base_ref"..HEAD -- "$f" | preview_unified_diff
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        git diff --color=always -- "$f"
+        git diff --color=always -- "$f" | preview_unified_diff
     elif [ -f "$f" ]; then
         if command -v bat >/dev/null 2>&1; then
-            bat --color=always --style=plain -- "$f"
+            if [ -n "$cols" ]; then
+                bat --color=always --paging=never --style=plain --wrap=character --terminal-width="$cols" -- "$f"
+            else
+                bat --color=always --paging=never --style=plain --wrap=character -- "$f"
+            fi
         else
             cat -- "$f"
         fi
+    fi
+}
+
+# fzf pages through preview output by physical lines. When fzf wraps a long
+# source line itself, a page action can therefore skip text that was only
+# visible on wrapped display rows. Have bat wrap the diff to the exact preview
+# width first so each display row is a real output line.
+preview_unified_diff() {
+    if command -v bat >/dev/null 2>&1 && [ -n "$FZF_PREVIEW_COLUMNS" ]; then
+        bat --color=always --language=diff --paging=never --style=plain --wrap=character --terminal-width="$FZF_PREVIEW_COLUMNS" -- -
+    else
+        cat
     fi
 }
 
@@ -387,7 +404,7 @@ while true; do
     --header "$header" \
     --preview-label "$preview_label" \
     --preview-window "$preview_window" \
-    --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down \
+    --bind alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:refresh-preview \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "ctrl-s:transform($preview_toggle_cmd)" \
