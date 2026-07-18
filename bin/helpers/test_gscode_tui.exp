@@ -1,0 +1,92 @@
+#!/usr/bin/expect -f
+
+# Smoke-test gscode's fzf layout in a real pseudo-terminal.
+# Run from anywhere with: bin/helpers/test_gscode_tui.exp
+
+set timeout 8
+set helper_dir [file dirname [file normalize [info script]]]
+set gscode [file normalize [file join $helper_dir .. gscode]]
+
+proc fail {message} {
+    puts stderr "FAIL: $message"
+    exit 1
+}
+
+proc assert_equal {label actual expected} {
+    if {$actual ne $expected} {
+        fail "$label\nexpected: $expected\nactual:   $actual"
+    }
+}
+
+proc check_layout_actions {gscode} {
+    set unified_one [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --fit-preview short 94]
+    assert_equal "one-match unified layout" $unified_one {change-preview-window[right,50%,border-left,wrap,<100(down,85%,border-top,wrap)]}
+
+    set unified_many [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=30 $gscode --fit-preview short 94]
+    assert_equal "many-match unified layout" $unified_many {change-preview-window[right,50%,border-left,wrap,<100(down,50%,border-top,wrap)]}
+
+    set side_by_side_one [exec env {FZF_PREVIEW_LABEL=side-by-side hunks} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 FZF_PREVIEW_LINES=20 $gscode --fit-preview short 94]
+    assert_equal "one-match side-by-side layout" $side_by_side_one {change-preview-window[down,34,border-top,nowrap,<100(down,34,border-top,nowrap)]}
+
+    puts "PASS: match-aware layout actions"
+}
+
+proc resize_smoke {gscode mode arguments} {
+    log_user 0
+    spawn -noecho $gscode {*}$arguments
+    set child_pid [exp_pid]
+    set slave $spawn_out(slave,name)
+
+    if {[catch {exec stty -f $slave rows 40 columns 220} error]} {
+        catch {close}
+        catch {wait}
+        fail "$mode initial terminal sizing: $error"
+    }
+
+    after 500
+    for {set index 0} {$index < 200} {incr index} {
+        set columns [expr {60 + (($index * 41) % 170)}]
+        if {[catch {exec stty -f $slave rows 40 columns $columns} error]} {
+            catch {send "\003"}
+            catch {close}
+            catch {wait}
+            fail "$mode resize iteration $index: $error"
+        }
+        after 4
+    }
+
+    after 200
+    send "\003"
+    expect {
+        eof {}
+        timeout {
+            catch {send "\003"}
+            catch {exec kill -TERM $child_pid}
+            catch {close}
+            catch {wait}
+            fail "$mode did not exit after Ctrl-C following resize burst"
+        }
+    }
+
+    set result [wait]
+    if {[lindex $result 3] != 0} {
+        fail "$mode exited with status [lindex $result 3]"
+    }
+    puts "PASS: $mode survives rapid horizontal resizing"
+}
+
+if {![file executable $gscode]} {
+    fail "gscode is not executable: $gscode"
+}
+
+set source_handle [open $gscode r]
+set source [read $source_handle]
+close $source_handle
+if {[string first {resize:} $source] >= 0} {
+    fail "gscode must not bind external work to fzf's resize event"
+}
+
+check_layout_actions $gscode
+resize_smoke $gscode "unified mode" [list -b HEAD~1]
+resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
+puts "PASS: all gscode TUI smoke tests"
