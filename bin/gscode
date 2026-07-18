@@ -313,10 +313,16 @@ stacked_preview_window() {
 }
 
 resize_stacked_preview_action() {
-    local header="$1" fallback_file_count="$2" preview_window
+    local header="$1" fallback_file_count="$2" preview_window preview_lines
 
     [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ] || return 0
     preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
+
+    preview_lines="${preview_window#down,}"
+    preview_lines="${preview_lines%%,*}"
+    if [ -n "${FZF_PREVIEW_LINES:-}" ] && [ "$FZF_PREVIEW_LINES" = "$preview_lines" ]; then
+        return 0
+    fi
     print -r -- "change-preview-window[$preview_window]"
 }
 
@@ -611,7 +617,6 @@ else
     preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
 fi
-resize_header_cmd="$quoted_self --fzf-header current $quoted_header"
 resize_stacked_preview_cmd="$quoted_self --resize-stacked-preview $quoted_header $file_count"
 adjust_selector_cmd="$quoted_self --adjust-selector"
 
@@ -629,6 +634,8 @@ fi
 
 header=$(fzf_header "$header_layout" "$header") || exit
 
+# Do not run transforms or preview commands from fzf's resize event. A fast
+# terminal drag can queue those actions and block keyboard input indefinitely.
 while true; do
     selected_filename=$(printf '%s\n' "$changed_files" | fzf \
     --query="$fzf_query" \
@@ -643,7 +650,7 @@ while true; do
     --preview-label "$preview_label" \
     --preview-window "$preview_window" \
     --bind "load:transform($resize_stacked_preview_cmd)" \
-    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:transform($resize_stacked_preview_cmd)+transform-header($resize_header_cmd)+refresh-preview" \
+    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
