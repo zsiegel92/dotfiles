@@ -4,7 +4,7 @@
 #
 # Keys in the picker:
 #   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
-#   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
+#   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
 #   Ctrl-H   open the current changeset with `hunk diff`
 #   Ctrl-D   open the selected file in `code --diff`
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
@@ -40,7 +40,8 @@ Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side p
 
 Keys:
   Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
-  Open+stay   Ctrl-Enter, or Ctrl-J/Alt-Enter when fzf cannot bind Ctrl-Enter
+  Open+stay   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter
+  Ctrl-J/K    decrease/increase the space allocated to the file selector
   Ctrl-H      open the current changeset with hunk diff
   Ctrl-D      open the selected file in code --diff
   Ctrl-S      toggle unified and side-by-side hunk previews
@@ -319,6 +320,77 @@ resize_stacked_preview_action() {
     print -r -- "change-preview-window[$preview_window]"
 }
 
+adjust_selector_action() {
+    local direction="$1"
+    local total_size selector_size preview_size step min_selector_size min_preview_size orientation border wrap fallback
+
+    case "$direction" in
+        decrease|increase) ;;
+        *) return 2 ;;
+    esac
+
+    case "${FZF_PREVIEW_LEFT:-}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    case "${FZF_PREVIEW_TOP:-}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    case "${FZF_PREVIEW_COLUMNS:-}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    case "${FZF_PREVIEW_LINES:-}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    case "${FZF_COLUMNS:-}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+
+    if [ $((FZF_PREVIEW_COLUMNS * 4)) -lt $((FZF_COLUMNS * 3)) ]; then
+        total_size="${FZF_COLUMNS:-}"
+        selector_size=$((total_size - FZF_PREVIEW_COLUMNS))
+        min_selector_size=5
+        min_preview_size=20
+        orientation=right
+        border=border-left
+        wrap=wrap
+    else
+        total_size="${FZF_LINES:-}"
+        selector_size=$((total_size - FZF_PREVIEW_LINES))
+        min_selector_size=1
+        min_preview_size=5
+        orientation=down
+        border=border-top
+        if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
+            wrap=nowrap
+        else
+            wrap=wrap
+        fi
+    fi
+
+    case "$total_size" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    [ "$total_size" -gt $((min_selector_size + min_preview_size)) ] || return 0
+
+    step=$((total_size / 20))
+    [ "$step" -lt 1 ] && step=1
+    if [ "$direction" = decrease ]; then
+        selector_size=$((selector_size - step))
+    else
+        selector_size=$((selector_size + step))
+    fi
+    [ "$selector_size" -lt "$min_selector_size" ] && selector_size="$min_selector_size"
+    [ "$selector_size" -gt $((total_size - min_preview_size)) ] && selector_size=$((total_size - min_preview_size))
+    preview_size=$((total_size - selector_size))
+
+    if [ "$orientation" = right ]; then
+        fallback="<100(down,70%,border-top,$wrap)"
+    else
+        fallback="<100(down,$preview_size,border-top,$wrap)"
+    fi
+    print -r -- "change-preview-window[$orientation,$preview_size,$border,$wrap,$fallback]"
+}
+
 open_diff_file() {
     local base_ref f repo_path basename LEFT
     base_ref="$1"
@@ -370,7 +442,7 @@ if [ "$1" = "--fzf-header" ]; then
 fi
 
 # Internal: invoked by fzf preview and nested-view bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--resize-stacked-preview" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--resize-stacked-preview" ] || [ "$1" = "--adjust-selector" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -404,6 +476,9 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             ;;
         --resize-stacked-preview)
             resize_stacked_preview_action "$1" "$2"
+            ;;
+        --adjust-selector)
+            adjust_selector_action "$1"
             ;;
     esac
     exit 0
@@ -490,8 +565,8 @@ if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/
     open_stay_key_label="ctrl-enter"
     open_stay_keys=(ctrl-enter)
 else
-    open_stay_key_label="ctrl-j/alt-enter"
-    open_stay_keys=(ctrl-j alt-enter)
+    open_stay_key_label="alt-enter"
+    open_stay_keys=(alt-enter)
 fi
 
 open_stay_bind=
@@ -507,7 +582,7 @@ if [ -n "$base_ref" ]; then
     fi
     changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
@@ -515,7 +590,7 @@ if [ -n "$base_ref" ]; then
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     unified_preview_cmd="$quoted_self --preview-file {}"
@@ -538,6 +613,7 @@ else
 fi
 resize_header_cmd="$quoted_self --fzf-header current $quoted_header"
 resize_stacked_preview_cmd="$quoted_self --resize-stacked-preview $quoted_header $file_count"
+adjust_selector_cmd="$quoted_self --adjust-selector"
 
 if [ "$start_side_by_side" -eq 1 ]; then
     preview_cmd="$side_by_side_preview_cmd"
@@ -574,6 +650,7 @@ while true; do
     --bind "ctrl-s:transform($preview_toggle_cmd)+transform($resize_stacked_preview_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
+    --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)" \
     --preview "$preview_cmd")
     if [ -n "$selected_filename" ]; then
         code "$selected_filename"
