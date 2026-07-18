@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+proc exit_with_child_status {} {
+    if {[catch {wait} result]} {
+        exit 0
+    }
+    exit [lindex $result 3]
+}
+
+set timeout 10
+spawn -noecho hunk {*}$argv
+expect {
+    -re {Help} {
+        after 250
+        send -- "s"
+    }
+    timeout {}
+    eof { exit_with_child_status }
+}
+
+interact
+exit_with_child_status
