@@ -242,7 +242,8 @@ preview_toggle_actions() {
     fi
 
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-        print -r -- "change-preview-window[right,50%,border-left,wrap,<100(down,70%,border-top,wrap)]+change-preview[$unified_preview]+change-preview-label[unified diff]+transform-header[$quoted_self --fzf-header right $quoted_header]"
+        preview_window=$(unified_preview_window "$fallback_file_count") || return
+        print -r -- "change-preview-window[$preview_window]+change-preview[$unified_preview]+change-preview-label[unified diff]+transform-header[$quoted_self --fzf-header right $quoted_header]"
     else
         preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
         print -r -- "change-preview-window[$preview_window]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]+transform-header[$quoted_self --fzf-header stacked $quoted_header]"
@@ -312,12 +313,45 @@ stacked_preview_window() {
     print -r -- "down,${preview_lines},border-top,nowrap,<100(down,${preview_lines},border-top,nowrap)"
 }
 
-resize_stacked_preview_action() {
+unified_preview_window() {
+    local fallback_file_count="$1"
+    local total_lines file_count additional_file_percent selector_percent preview_percent
+
+    total_lines="${FZF_LINES:-$(tput lines 2>/dev/null)}"
+    case "$total_lines" in
+        ''|*[!0-9]*) total_lines=40 ;;
+    esac
+    [ "$total_lines" -lt 1 ] && total_lines=40
+
+    file_count="${FZF_MATCH_COUNT:-$fallback_file_count}"
+    case "$file_count" in
+        ''|*[!0-9]*) file_count=0 ;;
+    esac
+
+    # fzf itself preserves the space required by the prompt and wrapped
+    # header. Reserve 15% for one result, add one row per additional result,
+    # and never let the selector consume more than half of the terminal.
+    selector_percent=15
+    if [ "$file_count" -gt 1 ]; then
+        additional_file_percent=$((((file_count - 1) * 100 + total_lines - 1) / total_lines))
+        selector_percent=$((selector_percent + additional_file_percent))
+    fi
+    [ "$selector_percent" -gt 50 ] && selector_percent=50
+    preview_percent=$((100 - selector_percent))
+
+    print -r -- "right,50%,border-left,wrap,<100(down,${preview_percent}%,border-top,wrap)"
+}
+
+fit_preview_action() {
     local header="$1" fallback_file_count="$2" preview_window preview_lines
 
-    [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ] || return 0
-    preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
+    if [ "$FZF_PREVIEW_LABEL" != "side-by-side hunks" ]; then
+        preview_window=$(unified_preview_window "$fallback_file_count") || return
+        print -r -- "change-preview-window[$preview_window]"
+        return 0
+    fi
 
+    preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
     preview_lines="${preview_window#down,}"
     preview_lines="${preview_lines%%,*}"
     if [ -n "${FZF_PREVIEW_LINES:-}" ] && [ "$FZF_PREVIEW_LINES" = "$preview_lines" ]; then
@@ -448,7 +482,7 @@ if [ "$1" = "--fzf-header" ]; then
 fi
 
 # Internal: invoked by fzf preview and nested-view bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--resize-stacked-preview" ] || [ "$1" = "--adjust-selector" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--fit-preview" ] || [ "$1" = "--adjust-selector" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -480,8 +514,8 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
         --enter-preview)
             enter_preview_action "$base_ref" "$1"
             ;;
-        --resize-stacked-preview)
-            resize_stacked_preview_action "$1" "$2"
+        --fit-preview)
+            fit_preview_action "$1" "$2"
             ;;
         --adjust-selector)
             adjust_selector_action "$1"
@@ -617,7 +651,7 @@ else
     preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
 fi
-resize_stacked_preview_cmd="$quoted_self --resize-stacked-preview $quoted_header $file_count"
+fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
 adjust_selector_cmd="$quoted_self --adjust-selector"
 
 if [ "$start_side_by_side" -eq 1 ]; then
@@ -628,7 +662,7 @@ if [ "$start_side_by_side" -eq 1 ]; then
 else
     preview_cmd="$unified_preview_cmd"
     preview_label="unified diff"
-    preview_window="right,50%,border-left,wrap,<100(down,70%,border-top,wrap)"
+    preview_window=$(unified_preview_window "$file_count") || exit
     header_layout=right
 fi
 
@@ -649,12 +683,12 @@ while true; do
     --header "$header" \
     --preview-label "$preview_label" \
     --preview-window "$preview_window" \
-    --bind "load:transform($resize_stacked_preview_cmd)" \
+    --bind "result:transform($fit_preview_cmd)" \
     --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
-    --bind "ctrl-s:transform($preview_toggle_cmd)+transform($resize_stacked_preview_cmd)" \
+    --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
     --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)" \
