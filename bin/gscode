@@ -226,7 +226,8 @@ enter_preview_action() {
 }
 
 preview_toggle_actions() {
-    local base_ref="$1" header="$2" quoted_self quoted_header unified_preview side_by_side_preview
+    local base_ref="$1" header="$2" fallback_file_count="$3"
+    local quoted_self quoted_header unified_preview side_by_side_preview preview_window
     quoted_self=${(q)SELF}
     quoted_header=${(q)header}
 
@@ -242,7 +243,8 @@ preview_toggle_actions() {
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
         print -r -- "change-preview-window[right,50%,border-left,wrap,<100(down,70%,border-top,wrap)]+change-preview[$unified_preview]+change-preview-label[unified diff]+transform-header[$quoted_self --fzf-header right $quoted_header]"
     else
-        print -r -- "change-preview-window[down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]+transform-header[$quoted_self --fzf-header stacked $quoted_header]"
+        preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
+        print -r -- "change-preview-window[$preview_window]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]+transform-header[$quoted_self --fzf-header stacked $quoted_header]"
     fi
 }
 
@@ -274,6 +276,47 @@ fzf_header() {
     esac
 
     "$HELPERS/fzf_wrap_header" --width-percent "$width_percent" --full-width-below "$full_width_below" "$header"
+}
+
+stacked_preview_window() {
+    local header="$1" fallback_file_count="$2"
+    local total_lines file_count header_lines selector_lines max_selector_lines preview_lines
+
+    total_lines="${FZF_LINES:-$(tput lines 2>/dev/null)}"
+    case "$total_lines" in
+        ''|*[!0-9]*) total_lines=40 ;;
+    esac
+
+    file_count="${FZF_MATCH_COUNT:-$fallback_file_count}"
+    case "$file_count" in
+        ''|*[!0-9]*) file_count=0 ;;
+    esac
+
+    header_lines=$(fzf_header stacked "$header" | awk 'END { print NR }')
+    [ -z "$header_lines" ] && header_lines=1
+
+    # In addition to the matches and wrapped header, leave room for fzf's
+    # prompt, separators, and border. Keep at least half of the terminal for
+    # the scrollable diff preview.
+    selector_lines=$((file_count + header_lines + 4))
+    max_selector_lines=$((total_lines / 2))
+    [ "$max_selector_lines" -lt 1 ] && max_selector_lines=1
+    [ "$selector_lines" -gt "$max_selector_lines" ] && selector_lines="$max_selector_lines"
+    preview_lines=$((total_lines - selector_lines))
+    [ "$preview_lines" -lt 1 ] && preview_lines=1
+
+    # Explicitly replace the narrow-width fallback too. change-preview-window
+    # otherwise inherits the unified view's fixed 70% fallback when Ctrl-S
+    # switches into this layout.
+    print -r -- "down,${preview_lines},border-top,nowrap,<100(down,${preview_lines},border-top,nowrap)"
+}
+
+resize_stacked_preview_action() {
+    local header="$1" fallback_file_count="$2" preview_window
+
+    [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ] || return 0
+    preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
+    print -r -- "change-preview-window[$preview_window]"
 }
 
 open_diff_file() {
@@ -327,7 +370,7 @@ if [ "$1" = "--fzf-header" ]; then
 fi
 
 # Internal: invoked by fzf preview and nested-view bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--resize-stacked-preview" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -347,7 +390,7 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             open_hunk_diff "$base_ref"
             ;;
         --toggle-preview)
-            preview_toggle_actions "$base_ref" "$1"
+            preview_toggle_actions "$base_ref" "$1" "$2"
             ;;
         --escape-preview)
             if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
@@ -358,6 +401,9 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             ;;
         --enter-preview)
             enter_preview_action "$base_ref" "$1"
+            ;;
+        --resize-stacked-preview)
+            resize_stacked_preview_action "$1" "$2"
             ;;
     esac
     exit 0
@@ -477,20 +523,26 @@ else
     preview_enter_cmd="$quoted_self --enter-preview {}"
 fi
 
+if [ -n "$changed_files" ]; then
+    file_count=$(printf '%s\n' "$changed_files" | awk 'END { print NR }')
+else
+    file_count=0
+fi
 quoted_header=${(q)header}
 if [ -n "$base_ref" ]; then
-    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header"
+    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
 else
-    preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header"
+    preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
 fi
 resize_header_cmd="$quoted_self --fzf-header current $quoted_header"
+resize_stacked_preview_cmd="$quoted_self --resize-stacked-preview $quoted_header $file_count"
 
 if [ "$start_side_by_side" -eq 1 ]; then
     preview_cmd="$side_by_side_preview_cmd"
     preview_label="side-by-side hunks"
-    preview_window="down,70%,border-top,nowrap,<100(down,45%,border-top,nowrap)"
+    preview_window=$(stacked_preview_window "$header" "$file_count") || exit
     header_layout=stacked
 else
     preview_cmd="$unified_preview_cmd"
@@ -514,11 +566,12 @@ while true; do
     --header "$header" \
     --preview-label "$preview_label" \
     --preview-window "$preview_window" \
-    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:transform-header($resize_header_cmd)+refresh-preview" \
+    --bind "load:transform($resize_stacked_preview_cmd)" \
+    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down,resize:transform($resize_stacked_preview_cmd)+transform-header($resize_header_cmd)+refresh-preview" \
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
-    --bind "ctrl-s:transform($preview_toggle_cmd)" \
+    --bind "ctrl-s:transform($preview_toggle_cmd)+transform($resize_stacked_preview_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
     --preview "$preview_cmd")
