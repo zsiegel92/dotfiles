@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Fuzzy-select git worktrees, enter them, and move ignored files between them.
+
+set -u
+
+usage() {
+    echo "Usage: worktree-manager [--select | --detach PATH | --create PATH | --copy-ignored SOURCE DESTINATION]" >&2
+}
+
+worktree_paths() {
+    git worktree list --porcelain | awk '/^worktree / { sub(/^worktree /, ""); print }'
+}
+
+detach_worktree() {
+    git -C "$1" checkout --detach
+}
+
+next_worktree_path() {
+    local selected=$1 parent base stem number candidate
+    parent=$(dirname "$selected")
+    base=$(basename "$selected")
+
+    if [[ $base =~ ^(.*)-([0-9]+)$ ]]; then
+        stem=${BASH_REMATCH[1]}
+        number=${BASH_REMATCH[2]}
+        ((number += 1))
+    else
+        stem=$base
+        number=2
+    fi
+
+    while :; do
+        candidate="$parent/$stem-$number"
+        [[ ! -e $candidate && ! -L $candidate ]] && {
+            printf '%s\n' "$candidate"
+            return
+        }
+        ((number += 1))
+    done
+}
+
+create_worktree() {
+    local selected=$1 destination
+    destination=$(next_worktree_path "$selected") || return
+    git -C "$selected" worktree add --detach "$destination" HEAD
+}
+
+copy_ignored() {
+    local source=$1 destination=$2 path source_path destination_path
+    local -a ignored_paths selected_paths
+
+    source=$(git -C "$source" rev-parse --show-toplevel) || return
+    destination=$(git -C "$destination" rev-parse --show-toplevel) || return
+
+    while IFS= read -r -d '' path; do
+        ignored_paths+=("$path")
+    done < <(git -C "$source" ls-files --others --ignored --exclude-standard --directory -z)
+    ((${#ignored_paths[@]})) || return
+
+    while IFS= read -r -d '' path; do
+        selected_paths+=("$path")
+    done < <(
+        printf '%s\0' "${ignored_paths[@]}" | fzf \
+            --read0 \
+            --print0 \
+            --multi \
+            --no-mouse \
+            --border \
+            --header 'tab: toggle, enter: copy selected files without overwriting'
+    )
+
+    for path in "${selected_paths[@]}"; do
+        source_path="$source/$path"
+        destination_path="$destination/$path"
+        [[ -e $destination_path || -L $destination_path ]] && continue
+        mkdir -p "$(dirname "$destination_path")" || continue
+        cp -R "$source_path" "$destination_path"
+    done
+}
+
+select_worktree() {
+    local current_root
+    current_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo 'worktree-manager: not inside a git worktree' >&2
+        return 1
+    }
+
+    worktree_paths | fzf \
+        --no-mouse \
+        --border \
+        --header 'enter: enter, ctrl-w: create adjacent, ctrl-q: detach, ctrl-b: bring ignored files, ctrl-s: send ignored files' \
+        --preview 'git -C {} status --short --branch' \
+        --bind 'ctrl-q:execute-silent(worktree-manager --detach {})+reload(git worktree list --porcelain | awk '\''/^worktree / { sub(/^worktree /, ""); print }'\'')' \
+        --bind 'ctrl-w:execute-silent(worktree-manager --create {})+reload(git worktree list --porcelain | awk '\''/^worktree / { sub(/^worktree /, ""); print }'\'')' \
+        --bind "ctrl-b:execute(command worktree-manager --copy-ignored {} $(printf '%q' "$current_root"))" \
+        --bind "ctrl-s:execute(command worktree-manager --copy-ignored $(printf '%q' "$current_root") {})"
+}
+
+case "${1:---select}" in
+    --select)
+        [[ $# -eq 1 || $# -eq 0 ]] || { usage; exit 2; }
+        select_worktree
+        ;;
+    --detach)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        detach_worktree "$2"
+        ;;
+    --create)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        create_worktree "$2"
+        ;;
+    --copy-ignored)
+        [[ $# -eq 3 ]] || { usage; exit 2; }
+        copy_ignored "$2" "$3"
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
