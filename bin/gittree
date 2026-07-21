@@ -1,3 +1,10 @@
 #!/usr/bin/env bash
 # Show a tree of git-tracked files (respects .gitignore via git ls-tree).
-git ls-tree -r --name-only HEAD | tree --fromfile
+
+if [ "$#" -gt 1 ]; then
+    echo "Usage: gittree [folder]" >&2
+    exit 2
+fi
+
+folder=${1:-.}
+git -C "$folder" ls-tree -r --name-only HEAD | tree --fromfile
