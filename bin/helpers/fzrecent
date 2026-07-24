@@ -3,23 +3,66 @@
 # Each row shows the modified date (Myyyy-MM-dd) next to the path (with the
 # search directory's prefix stripped for readability). The full path is printed
 # on selection. Preview shows the file contents.
-# Usage: fzrecent [-d depth] [-f] [dir=.]
-#   -d depth  limit recursion to <depth> directory levels (default: infinite)
-#   -f        only files in the immediate directory (equivalent to -d 1)
 # Set FZRECENT_OPEN_STAY_COMMAND to a shell-quoted command prefix to enable an
 # open-without-closing-fzf shortcut. The selected path is appended to it.
 usage() {
-  echo "usage: fzrecent [-d depth] [-f] [dir=.]" >&2
+  cat <<'EOF'
+Usage: fzrecent [OPTIONS] [DIR]
+
+Fuzzy-select a recently modified file under DIR and print its path.
+DIR defaults to the current directory. Options may appear before or after DIR.
+
+Options:
+  -d, --depth DEPTH  Include files through DEPTH nested directory levels.
+                     DEPTH 0 means files directly in DIR; 1 also includes files
+                     in its immediate subdirectories. The default is unlimited.
+  -f, --flat         Show only files directly in DIR (equivalent to --depth 0).
+  -h, --help         Show this help.
+
+Picker shortcuts:
+  Ctrl-R             Toggle between unlimited recursion and current-directory-only.
+  Ctrl-A             Toggle filename and file-content search.
+  Ctrl-J / Ctrl-K    Shrink / grow the file list.
+  Alt-Up / Alt-Down  Scroll the preview.
+  PgUp / PgDn        Scroll the preview by one page.
+EOF
 }
 
 depth=""
 
+validate_depth() {
+  case "$depth" in
+    '')
+      return 0
+      ;;
+    *[!0-9]*)
+      echo "fzrecent: depth must be a non-negative integer: $depth" >&2
+      return 1
+      ;;
+  esac
+}
+
+set_depth() {
+  depth="$1"
+  if [ -z "$depth" ]; then
+    echo "fzrecent: depth cannot be empty" >&2
+    return 1
+  fi
+  validate_depth
+}
+
 list_recent_files() {
+  local -a find_args=(-H "$dir")
+
+  if [ -n "$depth" ]; then
+    find_args+=(-maxdepth "$((depth + 1))")
+  fi
+
   # Per file emit: epoch<TAB>Myyyy-MM-dd<TAB>fullpath. Sort newest-first, drop the
   # epoch sort key, then add a display column with the "<dir>/" prefix stripped:
   #   Myyyy-MM-dd<TAB>displayname<TAB>fullpath
   # fzf shows the date + display name, but returns (and previews) the full path.
-  find -H "$dir" ${depth:+-maxdepth "$depth"} -type f -print0 \
+  find "${find_args[@]}" -type f -print0 \
     | xargs -0 stat -f '%m	M%Sm	%N' -t '%Y-%m-%d' \
     | sort -rn \
     | cut -f2- \
@@ -66,6 +109,7 @@ if [ "$1" = "--content-filter" ]; then
   shift
   dir="${FZRECENT_DIR:-.}"
   depth="${FZRECENT_DEPTH:-}"
+  validate_depth || exit 2
   content_filter_recent_files "$1"
   exit
 fi
@@ -147,15 +191,64 @@ if [ "$1" = "--adjust-selector" ]; then
   exit $?
 fi
 
-while getopts "d:f" opt; do
-  case "$opt" in
-    d) depth="$OPTARG" ;;
-    f) depth=1 ;;
-    *) usage; exit 1 ;;
+dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -d|--depth)
+      if [ "$#" -lt 2 ]; then
+        echo "fzrecent: $1 requires a depth" >&2
+        usage >&2
+        exit 2
+      fi
+      set_depth "$2" || exit 2
+      shift 2
+      ;;
+    --depth=*)
+      set_depth "${1#*=}" || exit 2
+      shift
+      ;;
+    -d?*)
+      set_depth "${1#-d}" || exit 2
+      shift
+      ;;
+    -f|--flat)
+      depth=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      if [ "$#" -gt 1 ]; then
+        echo "fzrecent: expected at most one directory" >&2
+        usage >&2
+        exit 2
+      fi
+      if [ "$#" -eq 1 ]; then
+        dir="$1"
+      fi
+      break
+      ;;
+    -*)
+      echo "fzrecent: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$dir" ]; then
+        echo "fzrecent: expected at most one directory" >&2
+        usage >&2
+        exit 2
+      fi
+      dir="$1"
+      shift
+      ;;
   esac
 done
-shift $((OPTIND - 1))
-dir="${1:-.}"
+dir="${dir:-.}"
+validate_depth || exit 2
 
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 wrap_header_helper="${script_path%/*}/fzf_wrap_header"
@@ -163,6 +256,7 @@ query=""
 mode="filename"
 selected_path=""
 toggle_marker="__fzrecent_toggle_content_search__"
+depth_toggle_marker="__fzrecent_toggle_depth__"
 preview_command='if command -v bat >/dev/null 2>&1; then bat --color=always --style=plain --wrap=character ${FZF_PREVIEW_COLUMNS:+--terminal-width="$FZF_PREVIEW_COLUMNS"} -- {3}; else cat -- {3}; fi'
 scroll_bindings='alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down'
 open_stay_command="${FZRECENT_OPEN_STAY_COMMAND:-}"
@@ -199,6 +293,9 @@ parse_picker_output() {
   if [ "$second_line" = "$toggle_marker" ]; then
     return 2
   fi
+  if [ "$second_line" = "$depth_toggle_marker" ]; then
+    return 3
+  fi
 
   if [ -n "$third_line" ] || [ -z "$second_line" ]; then
     selected_line="$third_line"
@@ -215,10 +312,24 @@ parse_picker_output() {
 }
 
 run_picker() {
-  local picker_output picker_status parse_status filter_command header prompt
+  local picker_output picker_status parse_status filter_command header prompt scope_label depth_toggle_label
+
+  if [ -z "$depth" ]; then
+    scope_label="recursive"
+    depth_toggle_label="current only"
+  elif [ "$depth" -eq 0 ]; then
+    scope_label="current only"
+    depth_toggle_label="recursive"
+  elif [ "$depth" -eq 1 ]; then
+    scope_label="1 nested level"
+    depth_toggle_label="recursive"
+  else
+    scope_label="$depth nested levels"
+    depth_toggle_label="recursive"
+  fi
 
   if [ "$mode" = "content" ]; then
-    header="enter: select · ctrl-a: filename search${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
+    header="scope: $scope_label · ctrl-r: use $depth_toggle_label · enter: select · ctrl-a: filename search${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
     prompt='text> '
     filter_command="FZRECENT_DIR=$(shell_quote "$dir") FZRECENT_DEPTH=$(shell_quote "$depth") $(shell_quote "$script_path") --content-filter"
     export FZRECENT_HEADER="$header"
@@ -238,10 +349,11 @@ run_picker() {
       --preview-window='right,60%,<100(down,50%,border-top)' \
       --bind "$scroll_bindings" \
       --bind "ctrl-a:print($toggle_marker)+accept" \
+      --bind "ctrl-r:print($depth_toggle_marker)+accept" \
       --bind "change:reload:$filter_command {q}" \
       --preview "$preview_command")
   else
-    header="enter: select · ctrl-a: search file text${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
+    header="scope: $scope_label · ctrl-r: use $depth_toggle_label · enter: select · ctrl-a: search file text${open_stay_key_label:+ · $open_stay_key_label: open+stay} · ctrl-j/k: resize · alt-up/down, pgup/dn: preview"
     prompt='files> '
     export FZRECENT_HEADER="$header"
     header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "$header") || return
@@ -259,13 +371,14 @@ run_picker() {
       --preview-window='right,60%,<100(down,50%,border-top)' \
       --bind "$scroll_bindings" \
       --bind "ctrl-a:print($toggle_marker)+accept" \
+      --bind "ctrl-r:print($depth_toggle_marker)+accept" \
       --preview "$preview_command")
   fi
   picker_status=$?
 
   parse_picker_output "$picker_output"
   parse_status=$?
-  if [ "$parse_status" -eq 0 ] || [ "$parse_status" -eq 2 ]; then
+  if [ "$parse_status" -eq 0 ] || [ "$parse_status" -eq 2 ] || [ "$parse_status" -eq 3 ]; then
     return "$parse_status"
   fi
 
@@ -290,6 +403,13 @@ while true; do
         mode="filename"
       else
         mode="content"
+      fi
+      ;;
+    3)
+      if [ -z "$depth" ]; then
+        depth=0
+      else
+        depth=""
       fi
       ;;
     *)

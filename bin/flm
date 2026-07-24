@@ -1,11 +1,43 @@
 #!/usr/bin/env bash
 # flm (fuzzy list modified): fuzzy-select a file (newest-modified first) under a
 # directory and open it in VS Code.
-# Usage: flm [-d depth] [-f] [dir=.]
-#   -d depth  limit recursion to <depth> directory levels (default: infinite)
-#   -f        only files in the immediate directory (equivalent to -d 1)
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+usage() {
+  cat <<'EOF'
+Usage: flm [OPTIONS] [DIR]
+
+Fuzzy-select a recently modified file under DIR and open it in VS Code.
+DIR defaults to the current directory. Options may appear before or after DIR.
+
+Options:
+  -d, --depth DEPTH  Include files through DEPTH nested directory levels.
+                     DEPTH 0 means files directly in DIR; 1 also includes files
+                     in its immediate subdirectories. The default is unlimited.
+  -f, --flat         Show only files directly in DIR (equivalent to --depth 0).
+  -h, --help         Show this help.
+
+Picker shortcuts:
+  Ctrl-R             Toggle between unlimited recursion and current-directory-only.
+  Ctrl-A             Toggle filename and file-content search.
+  Ctrl-J / Ctrl-K    Shrink / grow the file list.
+  Alt-Up / Alt-Down  Scroll the preview.
+  PgUp / PgDn        Scroll the preview by one page.
+EOF
+}
+
+for flm_arg in "$@"; do
+  case "$flm_arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      break
+      ;;
+  esac
+done
 
 if [ "$1" = "--open-file" ]; then
   shift
