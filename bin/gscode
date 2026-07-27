@@ -8,6 +8,7 @@
 #   Ctrl-H   open the current changeset with `hunk diff`
 #   Ctrl-D   open the selected file in `code --diff`
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
+#   Ctrl-X   copy the selected file path
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 GPARENT="$(cd "$(dirname "$0")" && pwd)/gparent"
@@ -45,6 +46,7 @@ Keys:
   Ctrl-H      open the current changeset with hunk diff
   Ctrl-D      open the selected file in code --diff
   Ctrl-S      toggle unified and side-by-side hunk previews
+  Ctrl-X      copy the selected file path
   Esc         return to the unified preview from side-by-side mode; otherwise exit
 
 Hunk diff view (press Ctrl-H from either preview):
@@ -455,6 +457,13 @@ open_diff_file() {
     fi
 }
 
+# Internal: invoked by the fzf ctrl-x binding.
+if [ "$1" = "--copy-file" ]; then
+    shift
+    [ -n "$1" ] && printf '%s' "$1" | pbcopy
+    exit 0
+fi
+
 # Internal: invoked by the fzf open+stay binding.
 if [ "$1" = "--open-file" ]; then
     shift
@@ -622,7 +631,7 @@ if [ -n "$base_ref" ]; then
     fi
     changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side · ctrl-j/k: selector −/+"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
@@ -630,7 +639,7 @@ if [ -n "$base_ref" ]; then
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side · ctrl-j/k: selector −/+"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     unified_preview_cmd="$quoted_self --preview-file {}"
@@ -688,6 +697,7 @@ while true; do
     --bind "$open_stay_bind" \
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
+    --bind "ctrl-x:execute-silent($quoted_self --copy-file {})" \
     --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
