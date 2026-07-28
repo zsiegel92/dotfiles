@@ -904,6 +904,7 @@ run_picker() {
     picker_args=(
         --query="$active_query"
         --print-query
+        --no-clear
         --no-mouse
         --no-sort
         --tac
@@ -950,6 +951,12 @@ run_picker() {
     [ "$picker_status" -eq 0 ] && return "$parse_status"
     return "$picker_status"
 }
+
+# Ctrl-W restarts fzf to swap its active query without discarding the other query. Keep the alternate screen open across those short-lived picker processes to avoid flashing back to the shell between them.
+restore_terminal_screen() {
+    tput rmcup > /dev/tty 2>/dev/null || true
+}
+trap restore_terminal_screen EXIT
 
 # Do not run transforms or preview commands from fzf's resize event. A fast
 # terminal drag can queue those actions and block keyboard input indefinitely.
