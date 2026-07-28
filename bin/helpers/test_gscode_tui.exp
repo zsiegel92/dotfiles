@@ -38,15 +38,28 @@ proc check_layout_actions {gscode} {
 }
 
 proc check_current_file_preview_actions {gscode} {
-    set current_file [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1]
+    set current_file [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --content-query needle]
     assert_contains "Ctrl-P enables the current-file preview" $current_file {change-preview-label[current file]}
-    assert_contains "Ctrl-P uses the persistent current-file preview command" $current_file {--preview-current-file {}}
+    assert_contains "Ctrl-P uses the persistent current-file preview command" $current_file {--preview-current-file --content-query needle {}}
 
-    set unified_diff [exec env {FZF_PREVIEW_LABEL=current file} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1]
+    set unified_diff [exec env {FZF_PREVIEW_LABEL=current file} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --content-query needle]
     assert_contains "Ctrl-P restores the unified diff preview" $unified_diff {change-preview-label[unified diff]}
-    assert_contains "Ctrl-P restores the unified diff preview command" $unified_diff {--preview-file {}}
+    assert_contains "Ctrl-P restores the unified diff preview command" $unified_diff {--preview-file --content-query needle {}}
+
+    set live_query [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --live-content-query]
+    assert_contains "Ctrl-P keeps content-mode highlights live" $live_query {--preview-current-file --content-query {q} {}}
 
     puts "PASS: current-file preview actions"
+}
+
+proc check_query_toggle_action {gscode} {
+    set current_file [exec env {FZF_PREVIEW_LABEL=current file} $gscode --toggle-query-mode marker]
+    assert_equal "Ctrl-W preserves the current-file preview label" $current_file {print[marker]+print[current file]+accept}
+
+    set side_by_side [exec env {FZF_PREVIEW_LABEL=side-by-side hunks} $gscode --toggle-query-mode marker]
+    assert_equal "Ctrl-W preserves the side-by-side preview label" $side_by_side {print[marker]+print[side-by-side hunks]+accept}
+
+    puts "PASS: query-toggle preview state"
 }
 
 proc resize_smoke {gscode mode arguments} {
@@ -106,6 +119,7 @@ if {[string first {resize:} $source] >= 0} {
 
 check_layout_actions $gscode
 check_current_file_preview_actions $gscode
+check_query_toggle_action $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
 puts "PASS: all gscode TUI smoke tests"

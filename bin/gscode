@@ -71,9 +71,16 @@ In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, C
 EOF
 }
 
+brighten_bat_highlight() {
+    # Lift bat's theme-provided highlight background without changing its hue or the syntax foreground colors.
+    perl -pe 's/\e\[48;2;(\d+);(\d+);(\d+)/sprintf("\e[48;2;%d;%d;%d", ($1 + 24 > 255 ? 255 : $1 + 24), ($2 + 24 > 255 ? 255 : $2 + 24), ($3 + 24 > 255 ? 255 : $3 + 24))/ge'
+}
+
 preview_current_file() {
-    local f cols
+    local f content_query cols matching_line
+    local -a bat_args
     f="$1"
+    content_query="$2"
     cols="${FZF_PREVIEW_COLUMNS:-}"
     [ -z "$f" ] && return 0
 
@@ -83,10 +90,19 @@ preview_current_file() {
     fi
 
     if command -v bat >/dev/null 2>&1; then
+        bat_args=(--color=always --paging=never --style=plain --wrap=character)
         if [ -n "$cols" ]; then
-            bat --color=always --paging=never --style=plain --wrap=character --terminal-width="$cols" -- "$f"
+            bat_args+=(--terminal-width="$cols")
+        fi
+        if [ -n "$content_query" ] && command -v rg >/dev/null 2>&1; then
+            while IFS= read -r matching_line; do
+                bat_args+=(--highlight-line "$matching_line")
+            done < <(rg --no-filename --text --line-number --fixed-strings --ignore-case -- "$content_query" "$f" | cut -d: -f1)
+        fi
+        if [ -n "$content_query" ]; then
+            bat "${bat_args[@]}" -- "$f" | brighten_bat_highlight
         else
-            bat --color=always --paging=never --style=plain --wrap=character -- "$f"
+            bat "${bat_args[@]}" -- "$f"
         fi
     else
         cat -- "$f"
@@ -94,9 +110,10 @@ preview_current_file() {
 }
 
 preview_file() {
-    local base_ref f
+    local base_ref f content_query
     base_ref="$1"
     f="$2"
+    content_query="$3"
     [ -z "$f" ] && return 0
 
     if [ -n "$base_ref" ]; then
@@ -104,7 +121,7 @@ preview_file() {
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f" | preview_unified_diff
     else
-        preview_current_file "$f"
+        preview_current_file "$f" "$content_query"
     fi
 }
 
@@ -279,18 +296,27 @@ enter_preview_action() {
     print -r -- "execute[$pager_command]"
 }
 
+preview_content_query_arg() {
+    if [ "$1" = "--live-content-query" ]; then
+        print -r -- '{q}'
+    else
+        print -r -- ${(q)2}
+    fi
+}
+
 preview_toggle_actions() {
-    local base_ref="$1" header="$2" fallback_file_count="$3"
-    local quoted_self quoted_header unified_preview side_by_side_preview preview_window
+    local base_ref="$1" header="$2" fallback_file_count="$3" query_option="$4" content_query="$5"
+    local quoted_self quoted_header quoted_content_query unified_preview side_by_side_preview preview_window
     quoted_self=${(q)SELF}
     quoted_header=${(q)header}
+    quoted_content_query=$(preview_content_query_arg "$query_option" "$content_query") || return
 
     if [ -n "$base_ref" ]; then
         local quoted_base_ref=${(q)base_ref}
-        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref {}"
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {}"
         side_by_side_preview="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
     else
-        unified_preview="$quoted_self --preview-file {}"
+        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {}"
         side_by_side_preview="$quoted_self --preview-side-by-side {}"
     fi
 
@@ -304,18 +330,19 @@ preview_toggle_actions() {
 }
 
 current_file_toggle_actions() {
-    local base_ref="$1" header="$2" fallback_file_count="$3"
-    local quoted_self quoted_header unified_preview current_file_preview preview_window
+    local base_ref="$1" header="$2" fallback_file_count="$3" query_option="$4" content_query="$5"
+    local quoted_self quoted_header quoted_content_query unified_preview current_file_preview preview_window
     quoted_self=${(q)SELF}
     quoted_header=${(q)header}
+    quoted_content_query=$(preview_content_query_arg "$query_option" "$content_query") || return
 
     if [ -n "$base_ref" ]; then
         local quoted_base_ref=${(q)base_ref}
-        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref {}"
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {}"
     else
-        unified_preview="$quoted_self --preview-file {}"
+        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {}"
     fi
-    current_file_preview="$quoted_self --preview-current-file {}"
+    current_file_preview="$quoted_self --preview-current-file --content-query $quoted_content_query {}"
 
     if [ "$FZF_PREVIEW_LABEL" = "current file" ]; then
         preview_window=$(unified_preview_window "$fallback_file_count") || return
@@ -549,18 +576,28 @@ fi
 if [ "$1" = "--preview-file" ]; then
     shift
     base_ref=
+    content_query=
     if [ "$1" = "--branch" ]; then
         base_ref="$2"
         shift 2
     fi
-    preview_file "$base_ref" "$1"
+    if [ "$1" = "--content-query" ]; then
+        content_query="$2"
+        shift 2
+    fi
+    preview_file "$base_ref" "$1" "$content_query"
     exit 0
 fi
 
 # Internal: invoked by the fzf current-file preview binding.
 if [ "$1" = "--preview-current-file" ]; then
     shift
-    preview_current_file "$1"
+    content_query=
+    if [ "$1" = "--content-query" ]; then
+        content_query="$2"
+        shift 2
+    fi
+    preview_current_file "$1" "$content_query"
     exit 0
 fi
 
@@ -575,6 +612,21 @@ if [ "$1" = "--filter-files" ]; then
     fi
     filter_changed_files "$base_ref" "$1" "$2"
     exit $?
+fi
+
+# Internal: preserve the active preview mode when Ctrl-W restarts fzf to switch query modes.
+if [ "$1" = "--toggle-query-mode" ]; then
+    shift
+    case "$FZF_PREVIEW_LABEL" in
+        "unified diff"|"side-by-side hunks"|"current file")
+            preview_label="$FZF_PREVIEW_LABEL"
+            ;;
+        *)
+            preview_label="unified diff"
+            ;;
+    esac
+    print -r -- "print[$1]+print[$preview_label]+accept"
+    exit 0
 fi
 
 # Internal: invoked when fzf needs to rewrap its header.
@@ -605,14 +657,14 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             open_hunk_diff "$base_ref"
             ;;
         --toggle-preview)
-            preview_toggle_actions "$base_ref" "$1" "$2"
+            preview_toggle_actions "$base_ref" "$1" "$2" "$3" "$4"
             ;;
         --toggle-current-file)
-            current_file_toggle_actions "$base_ref" "$1" "$2"
+            current_file_toggle_actions "$base_ref" "$1" "$2" "$3" "$4"
             ;;
         --escape-preview)
             if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-                preview_toggle_actions "$base_ref" "$1"
+                preview_toggle_actions "$base_ref" "$1" "$2" "$3" "$4"
             else
                 print -r -- abort
             fi
@@ -730,15 +782,11 @@ if [ -n "$base_ref" ]; then
     header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
-    unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
-    side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
-    unified_preview_cmd="$quoted_self --preview-file {}"
-    side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
     preview_enter_cmd="$quoted_self --enter-preview {}"
 fi
 
@@ -753,6 +801,11 @@ content_query=""
 query_mode=filename
 query_toggle_marker="__gscode_toggle_content_search__"
 picker_query=""
+if [ "$start_side_by_side" -eq 1 ]; then
+    picker_preview_label="side-by-side hunks"
+else
+    picker_preview_label="unified diff"
+fi
 
 parse_picker_output() {
     local picker_output="$1" second_line third_line selected_line
@@ -762,6 +815,14 @@ parse_picker_output() {
     third_line=$(printf '%s\n' "$picker_output" | sed -n '3p')
 
     if [ "$second_line" = "$query_toggle_marker" ]; then
+        case "$third_line" in
+            "unified diff"|"side-by-side hunks"|"current file")
+                picker_preview_label="$third_line"
+                ;;
+            *)
+                picker_preview_label="unified diff"
+                ;;
+        esac
         return 2
     fi
 
@@ -777,8 +838,8 @@ parse_picker_output() {
 
 run_picker() {
     local picker_header rendered_header active_query prompt picker_output picker_status parse_status
-    local quoted_header preview_toggle_cmd current_file_toggle_cmd preview_escape_cmd fit_preview_cmd adjust_selector_cmd
-    local preview_cmd preview_label preview_window header_layout content_filter_cmd quoted_filename_query
+    local quoted_header quoted_content_query preview_query_arg preview_action_query_args preview_toggle_cmd current_file_toggle_cmd preview_escape_cmd fit_preview_cmd adjust_selector_cmd query_mode_toggle_cmd
+    local unified_preview_cmd side_by_side_preview_cmd current_file_preview_cmd preview_cmd preview_label preview_window header_layout content_filter_cmd quoted_filename_query
     local -a picker_args
 
     if [ "$query_mode" = "content" ]; then
@@ -791,30 +852,53 @@ run_picker() {
         prompt='files> '
     fi
     quoted_header=${(q)picker_header}
+    if [ "$query_mode" = "content" ]; then
+        preview_query_arg='{q}'
+        preview_action_query_args='--live-content-query'
+    else
+        quoted_content_query=${(q)content_query}
+        preview_query_arg="$quoted_content_query"
+        preview_action_query_args="--content-query $quoted_content_query"
+    fi
 
     if [ -n "$base_ref" ]; then
-        preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count"
-        current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count"
-        preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
+        unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref --content-query $preview_query_arg {}"
+        side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
+        preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
+        current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
+        preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
     else
-        preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
-        current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count"
-        preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
+        unified_preview_cmd="$quoted_self --preview-file --content-query $preview_query_arg {}"
+        side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
+        preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count $preview_action_query_args"
+        current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count $preview_action_query_args"
+        preview_escape_cmd="$quoted_self --escape-preview $quoted_header $file_count $preview_action_query_args"
     fi
+    current_file_preview_cmd="$quoted_self --preview-current-file --content-query $preview_query_arg {}"
     fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
     adjust_selector_cmd="$quoted_self --adjust-selector"
+    query_mode_toggle_cmd="$quoted_self --toggle-query-mode ${(q)query_toggle_marker}"
 
-    if [ "$start_side_by_side" -eq 1 ]; then
-        preview_cmd="$side_by_side_preview_cmd"
-        preview_label="side-by-side hunks"
-        preview_window=$(stacked_preview_window "$picker_header" "$file_count") || return
-        header_layout=stacked
-    else
-        preview_cmd="$unified_preview_cmd"
-        preview_label="unified diff"
-        preview_window=$(unified_preview_window "$file_count") || return
-        header_layout=right
-    fi
+    case "$picker_preview_label" in
+        "side-by-side hunks")
+            preview_cmd="$side_by_side_preview_cmd"
+            preview_label="side-by-side hunks"
+            preview_window=$(stacked_preview_window "$picker_header" "$file_count") || return
+            header_layout=stacked
+            ;;
+        "current file")
+            preview_cmd="$current_file_preview_cmd"
+            preview_label="current file"
+            preview_window=$(unified_preview_window "$file_count") || return
+            header_layout=right
+            ;;
+        *)
+            preview_cmd="$unified_preview_cmd"
+            preview_label="unified diff"
+            preview_window=$(unified_preview_window "$file_count") || return
+            header_layout=right
+            ;;
+    esac
     rendered_header=$(fzf_header "$header_layout" "$picker_header") || return
 
     picker_args=(
@@ -838,7 +922,7 @@ run_picker() {
         --bind "ctrl-x:execute-silent($quoted_self --copy-file {})"
         --bind "ctrl-p:transform($current_file_toggle_cmd)"
         --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)"
-        --bind "ctrl-w:print($query_toggle_marker)+accept"
+        --bind "ctrl-w:transform($query_mode_toggle_cmd)"
         --bind "esc:transform($preview_escape_cmd)"
         --bind "enter:transform($preview_enter_cmd)"
         --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)"
