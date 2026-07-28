@@ -18,6 +18,12 @@ proc assert_equal {label actual expected} {
     }
 }
 
+proc assert_contains {label actual expected} {
+    if {[string first $expected $actual] < 0} {
+        fail "$label\nexpected to contain: $expected\nactual:              $actual"
+    }
+}
+
 proc check_layout_actions {gscode} {
     set unified_one [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --fit-preview short 94]
     assert_equal "one-match unified layout" $unified_one {change-preview-window[right,50%,border-left,wrap,<100(down,85%,border-top,wrap)]}
@@ -29,6 +35,18 @@ proc check_layout_actions {gscode} {
     assert_equal "one-match side-by-side layout" $side_by_side_one {change-preview-window[down,34,border-top,nowrap,<100(down,34,border-top,nowrap)]}
 
     puts "PASS: match-aware layout actions"
+}
+
+proc check_current_file_preview_actions {gscode} {
+    set current_file [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1]
+    assert_contains "Ctrl-P enables the current-file preview" $current_file {change-preview-label[current file]}
+    assert_contains "Ctrl-P uses the persistent current-file preview command" $current_file {--preview-current-file {}}
+
+    set unified_diff [exec env {FZF_PREVIEW_LABEL=current file} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1]
+    assert_contains "Ctrl-P restores the unified diff preview" $unified_diff {change-preview-label[unified diff]}
+    assert_contains "Ctrl-P restores the unified diff preview command" $unified_diff {--preview-file {}}
+
+    puts "PASS: current-file preview actions"
 }
 
 proc resize_smoke {gscode mode arguments} {
@@ -87,6 +105,7 @@ if {[string first {resize:} $source] >= 0} {
 }
 
 check_layout_actions $gscode
+check_current_file_preview_actions $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
 puts "PASS: all gscode TUI smoke tests"

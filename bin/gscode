@@ -7,6 +7,7 @@
 #   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
 #   Ctrl-H   open the current changeset with `hunk diff`
 #   Ctrl-D   open the selected file in `code --diff`
+#   Ctrl-P   toggle the preview between the diff and the file's current contents
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
 #   Ctrl-X   copy the selected file path
 
@@ -45,6 +46,7 @@ Keys:
   Ctrl-J/K    decrease/increase the space allocated to the file selector
   Ctrl-H      open the current changeset with hunk diff
   Ctrl-D      open the selected file in code --diff
+  Ctrl-P      toggle the preview between the diff and the file's current contents (rendered with bat)
   Ctrl-S      toggle unified and side-by-side hunk previews
   Ctrl-X      copy the selected file path
   Esc         return to the unified preview from side-by-side mode; otherwise exit
@@ -67,27 +69,40 @@ In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, C
 EOF
 }
 
+preview_current_file() {
+    local f cols
+    f="$1"
+    cols="${FZF_PREVIEW_COLUMNS:-}"
+    [ -z "$f" ] && return 0
+
+    if [ ! -f "$f" ]; then
+        printf 'File is not present in the working tree: %s\n' "$f"
+        return 0
+    fi
+
+    if command -v bat >/dev/null 2>&1; then
+        if [ -n "$cols" ]; then
+            bat --color=always --paging=never --style=plain --wrap=character --terminal-width="$cols" -- "$f"
+        else
+            bat --color=always --paging=never --style=plain --wrap=character -- "$f"
+        fi
+    else
+        cat -- "$f"
+    fi
+}
+
 preview_file() {
-    local base_ref f cols
+    local base_ref f
     base_ref="$1"
     f="$2"
-    cols="${FZF_PREVIEW_COLUMNS:-}"
     [ -z "$f" ] && return 0
 
     if [ -n "$base_ref" ]; then
         git diff --color=always "$base_ref"..HEAD -- "$f" | preview_unified_diff
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f" | preview_unified_diff
-    elif [ -f "$f" ]; then
-        if command -v bat >/dev/null 2>&1; then
-            if [ -n "$cols" ]; then
-                bat --color=always --paging=never --style=plain --wrap=character --terminal-width="$cols" -- "$f"
-            else
-                bat --color=always --paging=never --style=plain --wrap=character -- "$f"
-            fi
-        else
-            cat -- "$f"
-        fi
+    else
+        preview_current_file "$f"
     fi
 }
 
@@ -249,6 +264,29 @@ preview_toggle_actions() {
     else
         preview_window=$(stacked_preview_window "$header" "$fallback_file_count") || return
         print -r -- "change-preview-window[$preview_window]+change-preview[$side_by_side_preview]+change-preview-label[side-by-side hunks]+transform-header[$quoted_self --fzf-header stacked $quoted_header]"
+    fi
+}
+
+current_file_toggle_actions() {
+    local base_ref="$1" header="$2" fallback_file_count="$3"
+    local quoted_self quoted_header unified_preview current_file_preview preview_window
+    quoted_self=${(q)SELF}
+    quoted_header=${(q)header}
+
+    if [ -n "$base_ref" ]; then
+        local quoted_base_ref=${(q)base_ref}
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref {}"
+    else
+        unified_preview="$quoted_self --preview-file {}"
+    fi
+    current_file_preview="$quoted_self --preview-current-file {}"
+
+    if [ "$FZF_PREVIEW_LABEL" = "current file" ]; then
+        preview_window=$(unified_preview_window "$fallback_file_count") || return
+        print -r -- "change-preview-window[$preview_window]+change-preview[$unified_preview]+change-preview-label[unified diff]+transform-header[$quoted_self --fzf-header right $quoted_header]"
+    else
+        preview_window=$(unified_preview_window "$fallback_file_count") || return
+        print -r -- "change-preview-window[$preview_window]+change-preview[$current_file_preview]+change-preview-label[current file]+transform-header[$quoted_self --fzf-header right $quoted_header]"
     fi
 }
 
@@ -483,6 +521,13 @@ if [ "$1" = "--preview-file" ]; then
     exit 0
 fi
 
+# Internal: invoked by the fzf current-file preview binding.
+if [ "$1" = "--preview-current-file" ]; then
+    shift
+    preview_current_file "$1"
+    exit 0
+fi
+
 # Internal: invoked when fzf needs to rewrap its header.
 if [ "$1" = "--fzf-header" ]; then
     shift
@@ -491,7 +536,7 @@ if [ "$1" = "--fzf-header" ]; then
 fi
 
 # Internal: invoked by fzf preview and nested-view bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--fit-preview" ] || [ "$1" = "--adjust-selector" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--toggle-current-file" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--fit-preview" ] || [ "$1" = "--adjust-selector" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -512,6 +557,9 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             ;;
         --toggle-preview)
             preview_toggle_actions "$base_ref" "$1" "$2"
+            ;;
+        --toggle-current-file)
+            current_file_toggle_actions "$base_ref" "$1" "$2"
             ;;
         --escape-preview)
             if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
@@ -631,7 +679,7 @@ if [ -n "$base_ref" ]; then
     fi
     changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
@@ -639,7 +687,7 @@ if [ -n "$base_ref" ]; then
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
     changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     unified_preview_cmd="$quoted_self --preview-file {}"
@@ -655,9 +703,11 @@ fi
 quoted_header=${(q)header}
 if [ -n "$base_ref" ]; then
     preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count"
+    current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
 else
     preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
+    current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count"
     preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
 fi
 fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
@@ -698,6 +748,7 @@ while true; do
     --bind "$diff_bind" \
     --bind "$hunk_bind" \
     --bind "ctrl-x:execute-silent($quoted_self --copy-file {})" \
+    --bind "ctrl-p:transform($current_file_toggle_cmd)" \
     --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)" \
     --bind "esc:transform($preview_escape_cmd)" \
     --bind "enter:transform($preview_enter_cmd)" \
