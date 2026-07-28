@@ -9,6 +9,7 @@
 #   Ctrl-D   open the selected file in `code --diff`
 #   Ctrl-P   toggle the preview between the diff and the file's current contents
 #   Ctrl-S   toggle the preview between unified and side-by-side hunk views
+#   Ctrl-W   toggle filename and file-content search
 #   Ctrl-X   copy the selected file path
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
@@ -48,6 +49,7 @@ Keys:
   Ctrl-D      open the selected file in code --diff
   Ctrl-P      toggle the preview between the diff and the file's current contents (rendered with bat)
   Ctrl-S      toggle unified and side-by-side hunk previews
+  Ctrl-W      toggle filename and file-content search; both filters remain active
   Ctrl-X      copy the selected file path
   Esc         return to the unified preview from side-by-side mode; otherwise exit
 
@@ -103,6 +105,40 @@ preview_file() {
         git diff --color=always -- "$f" | preview_unified_diff
     else
         preview_current_file "$f"
+    fi
+}
+
+changed_files_for_mode() {
+    local base_ref="$1"
+
+    if [ -n "$base_ref" ]; then
+        git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d'
+    else
+        "$HELPERS/gscode_changed_files"
+    fi
+}
+
+content_filter_changed_files() {
+    local base_ref="$1" content_query="$2" file_path
+
+    if [ -z "$content_query" ]; then
+        changed_files_for_mode "$base_ref"
+        return
+    fi
+
+    changed_files_for_mode "$base_ref" | while IFS= read -r file_path; do
+        [ -f "$file_path" ] || continue
+        grep -F -i -q -- "$content_query" "$file_path" && print -r -- "$file_path"
+    done
+}
+
+filter_changed_files() {
+    local base_ref="$1" filename_query="$2" content_query="$3"
+
+    if [ -z "$filename_query" ]; then
+        content_filter_changed_files "$base_ref" "$content_query"
+    else
+        content_filter_changed_files "$base_ref" "$content_query" | fzf --filter="$filename_query" --no-sort
     fi
 }
 
@@ -528,6 +564,19 @@ if [ "$1" = "--preview-current-file" ]; then
     exit 0
 fi
 
+# Internal: list files matching both the filename and content filters. The
+# content-query picker reloads this command whenever its query changes.
+if [ "$1" = "--filter-files" ]; then
+    shift
+    base_ref=
+    if [ "$1" = "--branch" ]; then
+        base_ref="$2"
+        shift 2
+    fi
+    filter_changed_files "$base_ref" "$1" "$2"
+    exit $?
+fi
+
 # Internal: invoked when fzf needs to rewrap its header.
 if [ "$1" = "--fzf-header" ]; then
     shift
@@ -677,17 +726,15 @@ if [ -n "$base_ref" ]; then
         echo "gscode: branch/ref not found: $base_ref" >&2
         exit 1
     fi
-    changed_files=$(git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d')
     quoted_base_ref=${(q)base_ref}
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref {}"
     side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
 else
-    changed_files=$("$HELPERS/gscode_changed_files")
-    header="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     unified_preview_cmd="$quoted_self --preview-file {}"
@@ -695,68 +742,152 @@ else
     preview_enter_cmd="$quoted_self --enter-preview {}"
 fi
 
+changed_files=$(changed_files_for_mode "$base_ref")
 if [ -n "$changed_files" ]; then
     file_count=$(printf '%s\n' "$changed_files" | awk 'END { print NR }')
 else
     file_count=0
 fi
-quoted_header=${(q)header}
-if [ -n "$base_ref" ]; then
-    preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count"
-    current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count"
-    preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
-else
-    preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
-    current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count"
-    preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
-fi
-fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
-adjust_selector_cmd="$quoted_self --adjust-selector"
+filename_query="$fzf_query"
+content_query=""
+query_mode=filename
+query_toggle_marker="__gscode_toggle_content_search__"
+picker_query=""
 
-if [ "$start_side_by_side" -eq 1 ]; then
-    preview_cmd="$side_by_side_preview_cmd"
-    preview_label="side-by-side hunks"
-    preview_window=$(stacked_preview_window "$header" "$file_count") || exit
-    header_layout=stacked
-else
-    preview_cmd="$unified_preview_cmd"
-    preview_label="unified diff"
-    preview_window=$(unified_preview_window "$file_count") || exit
-    header_layout=right
-fi
+parse_picker_output() {
+    local picker_output="$1" second_line third_line selected_line
 
-header=$(fzf_header "$header_layout" "$header") || exit
+    picker_query=$(printf '%s\n' "$picker_output" | sed -n '1p')
+    second_line=$(printf '%s\n' "$picker_output" | sed -n '2p')
+    third_line=$(printf '%s\n' "$picker_output" | sed -n '3p')
+
+    if [ "$second_line" = "$query_toggle_marker" ]; then
+        return 2
+    fi
+
+    if [ -n "$third_line" ] || [ -z "$second_line" ]; then
+        selected_line="$third_line"
+    else
+        selected_line="$second_line"
+    fi
+
+    [ -n "$selected_line" ] || return 1
+    selected_filename="$selected_line"
+}
+
+run_picker() {
+    local picker_header rendered_header active_query prompt picker_output picker_status parse_status
+    local quoted_header preview_toggle_cmd current_file_toggle_cmd preview_escape_cmd fit_preview_cmd adjust_selector_cmd
+    local preview_cmd preview_label preview_window header_layout content_filter_cmd quoted_filename_query
+    local -a picker_args
+
+    if [ "$query_mode" = "content" ]; then
+        picker_header="$header_base · ctrl-w: search filenames"
+        active_query="$content_query"
+        prompt='contents> '
+    else
+        picker_header="$header_base · ctrl-w: search contents"
+        active_query="$filename_query"
+        prompt='files> '
+    fi
+    quoted_header=${(q)picker_header}
+
+    if [ -n "$base_ref" ]; then
+        preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count"
+        current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count"
+        preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header"
+    else
+        preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count"
+        current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count"
+        preview_escape_cmd="$quoted_self --escape-preview $quoted_header"
+    fi
+    fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
+    adjust_selector_cmd="$quoted_self --adjust-selector"
+
+    if [ "$start_side_by_side" -eq 1 ]; then
+        preview_cmd="$side_by_side_preview_cmd"
+        preview_label="side-by-side hunks"
+        preview_window=$(stacked_preview_window "$picker_header" "$file_count") || return
+        header_layout=stacked
+    else
+        preview_cmd="$unified_preview_cmd"
+        preview_label="unified diff"
+        preview_window=$(unified_preview_window "$file_count") || return
+        header_layout=right
+    fi
+    rendered_header=$(fzf_header "$header_layout" "$picker_header") || return
+
+    picker_args=(
+        --query="$active_query"
+        --print-query
+        --no-mouse
+        --no-sort
+        --tac
+        --ansi
+        --border
+        --wrap
+        --prompt "$prompt"
+        --header "$rendered_header"
+        --preview-label "$preview_label"
+        --preview-window "$preview_window"
+        --bind "result:transform($fit_preview_cmd)"
+        --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down"
+        --bind "$open_stay_bind"
+        --bind "$diff_bind"
+        --bind "$hunk_bind"
+        --bind "ctrl-x:execute-silent($quoted_self --copy-file {})"
+        --bind "ctrl-p:transform($current_file_toggle_cmd)"
+        --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)"
+        --bind "ctrl-w:print($query_toggle_marker)+accept"
+        --bind "esc:transform($preview_escape_cmd)"
+        --bind "enter:transform($preview_enter_cmd)"
+        --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)"
+        --preview "$preview_cmd"
+    )
+
+    if [ "$query_mode" = "content" ]; then
+        quoted_filename_query=${(q)filename_query}
+        if [ -n "$base_ref" ]; then
+            content_filter_cmd="$quoted_self --filter-files --branch $quoted_base_ref $quoted_filename_query"
+        else
+            content_filter_cmd="$quoted_self --filter-files $quoted_filename_query"
+        fi
+        picker_output=$(filter_changed_files "$base_ref" "$filename_query" "$content_query" | fzf --disabled "${picker_args[@]}" --bind "change:reload($content_filter_cmd {q})")
+    else
+        picker_output=$(content_filter_changed_files "$base_ref" "$content_query" | fzf "${picker_args[@]}")
+    fi
+    picker_status=$?
+
+    parse_picker_output "$picker_output"
+    parse_status=$?
+    if [ "$parse_status" -eq 0 ] || [ "$parse_status" -eq 2 ]; then
+        return "$parse_status"
+    fi
+    [ "$picker_status" -eq 0 ] && return "$parse_status"
+    return "$picker_status"
+}
 
 # Do not run transforms or preview commands from fzf's resize event. A fast
 # terminal drag can queue those actions and block keyboard input indefinitely.
 while true; do
-    selected_filename=$(printf '%s\n' "$changed_files" | fzf \
-    --query="$fzf_query" \
-    --no-mouse \
-    --no-sort  \
-    --tac \
-    --ansi \
-    --border \
-    --wrap \
-    --ansi \
-    --header "$header" \
-    --preview-label "$preview_label" \
-    --preview-window "$preview_window" \
-    --bind "result:transform($fit_preview_cmd)" \
-    --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
-    --bind "$open_stay_bind" \
-    --bind "$diff_bind" \
-    --bind "$hunk_bind" \
-    --bind "ctrl-x:execute-silent($quoted_self --copy-file {})" \
-    --bind "ctrl-p:transform($current_file_toggle_cmd)" \
-    --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)" \
-    --bind "esc:transform($preview_escape_cmd)" \
-    --bind "enter:transform($preview_enter_cmd)" \
-    --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)" \
-    --preview "$preview_cmd")
-    if [ -n "$selected_filename" ]; then
-        code "$selected_filename"
-    else
-        break
-    fi
+    run_picker
+    picker_status=$?
+
+    case "$picker_status" in
+        0)
+            code "$selected_filename"
+            ;;
+        2)
+            if [ "$query_mode" = "content" ]; then
+                content_query="$picker_query"
+                query_mode=filename
+            else
+                filename_query="$picker_query"
+                query_mode=content
+            fi
+            ;;
+        *)
+            break
+            ;;
+    esac
 done
