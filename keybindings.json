@@ -468,8 +468,14 @@
     "command": "workbench.action.decreaseViewSize"
   },
   {
-    "key": "ctrl+cmd+=",
-    "command": "workbench.action.increaseViewSize"
+    "key": "shift+cmd+]",
+    "command": "workbench.action.increaseViewSize",
+    "when": "!terminalFocus"
+  },
+  {
+    "key": "shift+cmd+[",
+    "command": "workbench.action.decreaseViewSize",
+    "when": "!terminalFocus"
   },
   {
     "key": "alt+d",
@@ -559,6 +565,12 @@
   },
   {
     "key": "cmd+alt+r",
+    "command": "workbench.action.quickOpen",
+    "args": ":",
+    "when": "editorTextFocus || workbench.view.search.active"
+  },
+  {
+    "key": "alt+r",
     "command": "workbench.action.quickOpen",
     "args": ":",
     "when": "editorTextFocus || workbench.view.search.active"
@@ -891,7 +903,8 @@
   },
   {
     "key": "ctrl+s",
-    "command": "workbench.action.files.saveWithoutFormatting"
+    "command": "workbench.action.files.saveWithoutFormatting",
+    "when": "editorTextFocus"
   },
   {
     "key": "cmd+r s",
@@ -905,10 +918,6 @@
     "key": "cmd+k cmd+c",
     "command": "copyRelativeFilePath",
     "when": "editorFocus"
-  },
-  {
-    "key": "cmd+k shift+cmd+c",
-    "command": "gitlens.copyCurrentBranch"
   },
   {
     "key": "cmd+down",
@@ -1088,5 +1097,108 @@
     "key": "shift+cmd+x",
     "command": "-mdx.toggleDelete",
     "when": "editorTextFocus && !editorReadonly && editorLangId == 'mdx'"
-  }
+  },
+  {
+    "key": "ctrl+b",
+    "command": "-cursorLeft",
+    "when": "textInputFocus"
+  },
+  {
+    "key": "ctrl+b",
+    "command": "git.blame.toggleEditorDecoration"
+  },
+  {
+    "key": "ctrl+shift+b",
+    "command": "gitlens.toggleFileBlame:key",
+    "when": "editorTextFocus && config.gitlens.keymap == 'chorded' && resource in 'gitlens:tabs:blameable'"
+  },
+  {
+    "key": "alt+cmd+g b",
+    "command": "-gitlens.toggleFileBlame:key",
+    "when": "editorTextFocus && config.gitlens.keymap == 'chorded' && resource in 'gitlens:tabs:blameable'"
+  },
+  {
+    "key": "ctrl+[",
+    "command": "github.copilot.chat.completions.disable"
+  },
+  {
+    "key": "ctrl+]",
+    "command": "github.copilot.chat.completions.enable"
+  },
+  {
+    "key": "alt+cmd+u",
+    "command": "workbench.action.terminal.unsplit",
+    "when": "terminalFocus"
+  },
+  {
+    "key": "cmd+k cmd+w",
+    "command": "-workbench.action.closeAllEditors"
+  },
+  {
+    "key": "cmd+k shift+g",
+    "command": "extension.diffWithMain"
+  },
+  {
+    "key": "cmd+right",
+    "command": "-editor.action.inlineSuggest.acceptNextWord",
+    "when": "cursorBeforeGhostText && inlineSuggestionVisible && !accessibilityModeEnabled && !editorReadonly"
+  },
+  {
+    "key": "cmd+k alt+cmd+c",
+    "command": "-workbench.action.addComment",
+    "when": "activeCursorHasCommentingRange"
+  },
+  {
+    "key": "cmd+k ctrl+c",
+    "command": "copyFilePath",
+    "when": "editorFocus"
+  },
+  {
+    "key": "shift+cmd+[",
+    "command": "-workbench.action.previousEditor"
+  },
+  {
+    "key": "shift+cmd+]",
+    "command": "-workbench.action.nextEditor"
+  },
+  {
+    "key": "alt+cmd+g c",
+    "command": "-gitlens.showQuickCommitFileDetails",
+    "when": "editorTextFocus && !gitlens:disabled && config.gitlens.keymap == 'chorded'"
+  },
+  {
+    "key": "alt+cmd+c",
+    "command": "-search.action.copyPath",
+    "when": "fileMatchOrFolderMatchWithResourceFocus"
+  },
+  {
+    "key": "alt+cmd+c",
+    "command": "-copyFilePath",
+    "when": "!editorFocus"
+  },
+  {
+    "key": "alt+cmd+c",
+    "command": "-toggleSearchCaseSensitive",
+    "when": "searchViewletFocus && !fileMatchOrFolderMatchFocus"
+  },
+  {
+    "key": "alt+cmd+c",
+    "command": "-toggleFindCaseSensitive",
+    "when": "editorFocus"
+  },
+  {
+    "key": "alt+cmd+c",
+    "command": "-debug.copyWatchExpression",
+    "when": "watchExpressionsExist && !expressionSelected && focusedView == 'workbench.debug.watchExpressionsView'"
+  },
+  {
+    "key": "ctrl+cmd+=",
+    "command": "workbench.action.increaseViewSize",
+    "when": "!terminalFocus"
+  },
+  {
+    "key": "cmd+down",
+    "command": "-list.select",
+    "when": "listFocus && !inputFocus && !treestickyScrollFocused"
+  },
 ]
