@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Open paths in Google Chrome, accepting arguments or newline-delimited stdin.
+
+set -euo pipefail
+
+if (( $# > 0 )); then
+    open -a "Google Chrome" "$@"
+    exit
+fi
+
+if [[ -t 0 ]]; then
+    open -a "Google Chrome"
+    exit
+fi
+
+targets=()
+while IFS= read -r target || [[ -n "${target}" ]]; do
+    [[ -n "${target}" ]] && targets+=("${target}")
+done
+
+if (( ${#targets[@]} > 0 )); then
+    open -a "Google Chrome" "${targets[@]}"
+fi
