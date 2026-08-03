@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+export KUBECONFIG=/Users/zsiegel/.kube/kpi1-kubeconfig.yaml
+namespace=runai-aieng-kingfisher
+
+workload=$(kubectl get deployments,statefulsets -n "$namespace" -o name | fzf --no-mouse --preview="kubectl describe -n $namespace {}") || exit
+container=$(kubectl get -n "$namespace" "$workload" -o jsonpath='{.spec.template.spec.containers[0].name}') || exit
+
+exec kubectl exec -it -n "$namespace" "$workload" -c "$container" -- /bin/bash
