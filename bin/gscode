@@ -40,6 +40,7 @@ Default mode lists dirty tracked and untracked files.
 Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
 Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
 Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side preview. Ctrl-S and Esc still return to the unified preview.
+Picker rows use `(status) path (+added -deleted)`. Untracked files appear as `A`; binary line counts appear as `?`.
 
 Keys:
   Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
@@ -125,27 +126,29 @@ preview_file() {
     fi
 }
 
-changed_files_for_mode() {
+changed_file_records_for_mode() {
     local base_ref="$1"
 
     if [ -n "$base_ref" ]; then
-        git diff --name-only "$base_ref"..HEAD | "$HELPERS/git_paths_relative_to_cwd" | sed '/^$/d'
+        "$HELPERS/gscode_changed_file_records" --branch "$base_ref"
     else
-        "$HELPERS/gscode_changed_files"
+        "$HELPERS/gscode_changed_file_records"
     fi
 }
 
 content_filter_changed_files() {
-    local base_ref="$1" content_query="$2" file_path
+    local base_ref="$1" content_query="$2" file_status file_path line_stats
 
     if [ -z "$content_query" ]; then
-        changed_files_for_mode "$base_ref"
+        changed_file_records_for_mode "$base_ref"
         return
     fi
 
-    changed_files_for_mode "$base_ref" | while IFS= read -r file_path; do
+    changed_file_records_for_mode "$base_ref" | while IFS=$'\x1f' read -r file_status file_path line_stats; do
         [ -f "$file_path" ] || continue
-        grep -F -i -q -- "$content_query" "$file_path" && print -r -- "$file_path"
+        if grep -F -i -q -- "$content_query" "$file_path"; then
+            printf '%s\037%s\037%s\n' "$file_status" "$file_path" "$line_stats"
+        fi
     done
 }
 
@@ -155,7 +158,7 @@ filter_changed_files() {
     if [ -z "$filename_query" ]; then
         content_filter_changed_files "$base_ref" "$content_query"
     else
-        content_filter_changed_files "$base_ref" "$content_query" | fzf --filter="$filename_query" --no-sort
+        content_filter_changed_files "$base_ref" "$content_query" | fzf --filter="$filename_query" --delimiter=$'\x1f' --nth=2
     fi
 }
 
@@ -313,11 +316,11 @@ preview_toggle_actions() {
 
     if [ -n "$base_ref" ]; then
         local quoted_base_ref=${(q)base_ref}
-        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {}"
-        side_by_side_preview="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {2}"
+        side_by_side_preview="$quoted_self --preview-side-by-side --branch $quoted_base_ref {2}"
     else
-        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {}"
-        side_by_side_preview="$quoted_self --preview-side-by-side {}"
+        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {2}"
+        side_by_side_preview="$quoted_self --preview-side-by-side {2}"
     fi
 
     if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
@@ -338,11 +341,11 @@ current_file_toggle_actions() {
 
     if [ -n "$base_ref" ]; then
         local quoted_base_ref=${(q)base_ref}
-        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {}"
+        unified_preview="$quoted_self --preview-file --branch $quoted_base_ref --content-query $quoted_content_query {2}"
     else
-        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {}"
+        unified_preview="$quoted_self --preview-file --content-query $quoted_content_query {2}"
     fi
-    current_file_preview="$quoted_self --preview-current-file --content-query $quoted_content_query {}"
+    current_file_preview="$quoted_self --preview-current-file --content-query $quoted_content_query {2}"
 
     if [ "$FZF_PREVIEW_LABEL" = "current file" ]; then
         preview_window=$(unified_preview_window "$fallback_file_count") || return
@@ -770,7 +773,7 @@ fi
 open_stay_bind=
 for key in "${open_stay_keys[@]}"; do
     [ -n "$open_stay_bind" ] && open_stay_bind+=","
-    open_stay_bind+="${key}:execute-silent($quoted_self --open-file {})"
+    open_stay_bind+="${key}:execute-silent($quoted_self --open-file {2})"
 done
 
 if [ -n "$base_ref" ]; then
@@ -780,19 +783,19 @@ if [ -n "$base_ref" ]; then
     fi
     quoted_base_ref=${(q)base_ref}
     header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
-    diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {})"
+    diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
-    preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {}"
+    preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {2}"
 else
     header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
-    diff_bind="ctrl-d:execute($quoted_self --diff-file {})"
+    diff_bind="ctrl-d:execute($quoted_self --diff-file {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
-    preview_enter_cmd="$quoted_self --enter-preview {}"
+    preview_enter_cmd="$quoted_self --enter-preview {2}"
 fi
 
-changed_files=$(changed_files_for_mode "$base_ref")
-if [ -n "$changed_files" ]; then
-    file_count=$(printf '%s\n' "$changed_files" | awk 'END { print NR }')
+changed_file_records=$(changed_file_records_for_mode "$base_ref")
+if [ -n "$changed_file_records" ]; then
+    file_count=$(printf '%s\n' "$changed_file_records" | awk 'END { print NR }')
 else
     file_count=0
 fi
@@ -833,7 +836,8 @@ parse_picker_output() {
     fi
 
     [ -n "$selected_line" ] || return 1
-    selected_filename="$selected_line"
+    selected_filename="${selected_line#*$'\x1f'}"
+    selected_filename="${selected_filename%%$'\x1f'*}"
 }
 
 run_picker() {
@@ -862,19 +866,19 @@ run_picker() {
     fi
 
     if [ -n "$base_ref" ]; then
-        unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref --content-query $preview_query_arg {}"
-        side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {}"
+        unified_preview_cmd="$quoted_self --preview-file --branch $quoted_base_ref --content-query $preview_query_arg {2}"
+        side_by_side_preview_cmd="$quoted_self --preview-side-by-side --branch $quoted_base_ref {2}"
         preview_toggle_cmd="$quoted_self --toggle-preview --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
         current_file_toggle_cmd="$quoted_self --toggle-current-file --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
         preview_escape_cmd="$quoted_self --escape-preview --branch $quoted_base_ref $quoted_header $file_count $preview_action_query_args"
     else
-        unified_preview_cmd="$quoted_self --preview-file --content-query $preview_query_arg {}"
-        side_by_side_preview_cmd="$quoted_self --preview-side-by-side {}"
+        unified_preview_cmd="$quoted_self --preview-file --content-query $preview_query_arg {2}"
+        side_by_side_preview_cmd="$quoted_self --preview-side-by-side {2}"
         preview_toggle_cmd="$quoted_self --toggle-preview $quoted_header $file_count $preview_action_query_args"
         current_file_toggle_cmd="$quoted_self --toggle-current-file $quoted_header $file_count $preview_action_query_args"
         preview_escape_cmd="$quoted_self --escape-preview $quoted_header $file_count $preview_action_query_args"
     fi
-    current_file_preview_cmd="$quoted_self --preview-current-file --content-query $preview_query_arg {}"
+    current_file_preview_cmd="$quoted_self --preview-current-file --content-query $preview_query_arg {2}"
     fit_preview_cmd="$quoted_self --fit-preview $quoted_header $file_count"
     adjust_selector_cmd="$quoted_self --adjust-selector"
     query_mode_toggle_cmd="$quoted_self --toggle-query-mode ${(q)query_toggle_marker}"
@@ -906,9 +910,10 @@ run_picker() {
         --print-query
         --no-clear
         --no-mouse
-        --no-sort
         --tac
         --ansi
+        --delimiter=$'\x1f'
+        --nth=2
         --border
         --wrap
         --prompt "$prompt"
@@ -920,7 +925,7 @@ run_picker() {
         --bind "$open_stay_bind"
         --bind "$diff_bind"
         --bind "$hunk_bind"
-        --bind "ctrl-x:execute-silent($quoted_self --copy-file {})"
+        --bind "ctrl-x:execute-silent($quoted_self --copy-file {2})"
         --bind "ctrl-p:transform($current_file_toggle_cmd)"
         --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)"
         --bind "ctrl-w:transform($query_mode_toggle_cmd)"

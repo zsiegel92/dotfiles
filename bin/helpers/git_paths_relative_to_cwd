@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # Convert repo-root-relative Git paths from stdin to paths relative to $PWD.
+# With --field N, preserve tab-separated records and convert only field N.
+
+path_field=1
+if [ "$1" = "--field" ]; then
+    path_field="$2"
+fi
 
 prefix=$(git rev-parse --show-prefix 2>/dev/null) || exit
 cwd_components=()
@@ -9,7 +15,13 @@ if [ -n "$prefix" ]; then
     cwd_components=("${components[@]}")
 fi
 
-while IFS= read -r repo_path; do
+while IFS= read -r input_line; do
+    if [ "$path_field" -eq 1 ]; then
+        repo_path="$input_line"
+    else
+        IFS=$'\t' read -r -a fields <<< "$input_line"
+        repo_path="${fields[$((path_field - 1))]}"
+    fi
     [ -n "$repo_path" ] || continue
 
     IFS=/ read -r -a path_components <<< "$repo_path"
@@ -35,5 +47,11 @@ while IFS= read -r repo_path; do
         fi
     done
 
-    printf '%s%s\n' "$relative" "$rest"
+    relative_path="${relative}${rest}"
+    if [ "$path_field" -eq 1 ]; then
+        printf '%s\n' "$relative_path"
+    else
+        fields[$((path_field - 1))]="$relative_path"
+        (IFS=$'\t'; printf '%s\n' "${fields[*]}")
+    fi
 done

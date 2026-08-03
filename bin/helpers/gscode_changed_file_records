@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Print changed files as separated status, path, and line-stat picker fields.
+
+set -o pipefail
+
+HELPERS="$(cd "$(dirname "$0")" && pwd)"
+base_ref=
+
+if [ "$1" = "--branch" ]; then
+    base_ref="$2"
+fi
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit
+
+print_root_record() {
+    local status="$1" repo_path="$2" additions="$3" deletions="$4" line_stats
+
+    if [ "$additions" = "-" ] && [ "$deletions" = "-" ]; then
+        line_stats='(+? -?)'
+    else
+        line_stats="(+${additions:-0} -${deletions:-0})"
+    fi
+    printf '(%s)\t%s\t%s\n' "$status" "$repo_path" "$line_stats"
+}
+
+root_relative_records() {
+    local diff_target
+
+    if [ -n "$base_ref" ]; then
+        diff_target="${base_ref}..HEAD"
+        while IFS=$'\t' read -r status repo_path additions deletions stats_path; do
+            [ -n "$repo_path" ] || continue
+            if [ "$repo_path" != "$stats_path" ]; then
+                echo "gscode: Git status and numstat paths did not align" >&2
+                return 1
+            fi
+            print_root_record "$status" "$repo_path" "$additions" "$deletions"
+        done < <(paste <(git -C "$repo_root" diff --no-renames --name-status "$diff_target") <(git -C "$repo_root" diff --no-renames --numstat "$diff_target"))
+        return
+    fi
+
+    while IFS=$'\t' read -r status repo_path additions deletions stats_path; do
+        [ -n "$repo_path" ] || continue
+        if [ "$repo_path" != "$stats_path" ]; then
+            echo "gscode: Git status and numstat paths did not align" >&2
+            return 1
+        fi
+        print_root_record "$status" "$repo_path" "$additions" "$deletions"
+    done < <(paste <(git -C "$repo_root" diff --no-renames --name-status) <(git -C "$repo_root" diff --no-renames --numstat))
+
+    while IFS= read -r -d '' repo_path; do
+        numstat=$(git diff --no-index --no-ext-diff --no-textconv --numstat -- /dev/null "$repo_root/$repo_path" 2>/dev/null || true)
+        IFS=$'\t' read -r additions deletions _ <<< "$numstat"
+        print_root_record A "$repo_path" "$additions" "$deletions"
+    done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
+}
+
+# Unit separators keep the three picker fields addressable without fzf expanding visible tab stops. Literal spaces around the separators render each row as "(M) path (+1 -2)".
+root_relative_records | "$HELPERS/git_paths_relative_to_cwd" --field 2 | while IFS=$'\t' read -r status relative_path line_stats; do
+    printf '%s \037%s\037 %s\n' "$status" "$relative_path" "$line_stats"
+done

@@ -40,14 +40,14 @@ proc check_layout_actions {gscode} {
 proc check_current_file_preview_actions {gscode} {
     set current_file [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --content-query needle]
     assert_contains "Ctrl-P enables the current-file preview" $current_file {change-preview-label[current file]}
-    assert_contains "Ctrl-P uses the persistent current-file preview command" $current_file {--preview-current-file --content-query needle {}}
+    assert_contains "Ctrl-P uses the persistent current-file preview command" $current_file {--preview-current-file --content-query needle {2}}
 
     set unified_diff [exec env {FZF_PREVIEW_LABEL=current file} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --content-query needle]
     assert_contains "Ctrl-P restores the unified diff preview" $unified_diff {change-preview-label[unified diff]}
-    assert_contains "Ctrl-P restores the unified diff preview command" $unified_diff {--preview-file --content-query needle {}}
+    assert_contains "Ctrl-P restores the unified diff preview command" $unified_diff {--preview-file --content-query needle {2}}
 
     set live_query [exec env {FZF_PREVIEW_LABEL=unified diff} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 $gscode --toggle-current-file {picker header} 1 --live-content-query]
-    assert_contains "Ctrl-P keeps content-mode highlights live" $live_query {--preview-current-file --content-query {q} {}}
+    assert_contains "Ctrl-P keeps content-mode highlights live" $live_query {--preview-current-file --content-query {q} {2}}
 
     puts "PASS: current-file preview actions"
 }
@@ -115,6 +115,9 @@ set source [read $source_handle]
 close $source_handle
 if {[string first {resize:} $source] >= 0} {
     fail "gscode must not bind external work to fzf's resize event"
+}
+if {[string first {--no-sort} $source] >= 0} {
+    fail "gscode must let fzf rank filename matches by relevance"
 }
 
 check_layout_actions $gscode
