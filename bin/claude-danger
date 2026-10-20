@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-claude --dangerously-skip-permissions
+exec claude --dangerously-skip-permissions "$@"
