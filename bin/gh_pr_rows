@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Print open GitHub PRs (across all repos) awaiting your review and/or yours awaiting review, as fzf rows.
+# Usage: gh_pr_rows [all|review|mine]
+#   review  open PRs where your review is requested
+#   mine    your open, non-draft PRs that are not yet approved
+#   all     both (default)
+# Output: one tab-separated row per PR, newest update first:
+#   url <TAB> display line <TAB> head branch
+mode="${1:-all}"
+case "$mode" in
+  all|review|mine) ;;
+  *)
+    echo "Usage: gh_pr_rows [all|review|mine]" >&2
+    exit 2
+    ;;
+esac
+
+gls_require_command gh || exit
+gls_require_command jq || exit
+
+review_query='is:pr is:open archived:false review-requested:@me'
+mine_query='is:pr is:open archived:false draft:false author:@me -review:approved'
+
+# shellcheck disable=SC2016  # GraphQL variables, not shell expansions
+graphql='
+fragment PrFields on PullRequest {
+  url
+  number
+  title
+  isDraft
+  updatedAt
+  reviewDecision
+  additions
+  deletions
+  changedFiles
+  headRefName
+  repository { nameWithOwner }
+  author { login }
+  reviewRequests(first: 20) {
+    nodes {
+      requestedReviewer {
+        ... on User { login }
+        ... on Team { slug }
+      }
+    }
+  }
+}
+query($reviewQuery: String!, $mineQuery: String!) {
+  review: search(query: $reviewQuery, type: ISSUE, first: 100) {
+    nodes { ...PrFields }
+  }
+  mine: search(query: $mineQuery, type: ISSUE, first: 100) {
+    nodes { ...PrFields }
+  }
+}'
+
+response=$(gh api graphql \
+  -f query="$graphql" \
+  -f reviewQuery="$review_query" \
+  -f mineQuery="$mine_query") || exit
+
+# Validate the response shape before trusting any of it.
+if ! jq -e '
+  (.errors | not)
+  and (.data.review.nodes | type == "array")
+  and (.data.mine.nodes | type == "array")
+' >/dev/null <<< "$response"; then
+  echo "Unexpected response from GitHub:" >&2
+  jq . <<< "$response" >&2 2>/dev/null || printf '%s\n' "$response" >&2
+  exit 1
+fi
+
+jq -r --arg mode "$mode" '
+  def red: "\u001b[31m" + . + "\u001b[0m";
+  def green: "\u001b[32m" + . + "\u001b[0m";
+  def yellow: "\u001b[33m" + . + "\u001b[0m";
+  def blue: "\u001b[34m" + . + "\u001b[0m";
+  def magenta: "\u001b[35m" + . + "\u001b[0m";
+  def cyan: "\u001b[36m" + . + "\u001b[0m";
+  def gray: "\u001b[90m" + . + "\u001b[0m";
+  def clean: tostring | gsub("[\t\r\n]"; " ");
+  def ago:
+    (now - (fromdateiso8601)) as $s
+    | if $s < 3600 then "\($s / 60 | floor)m"
+      elif $s < 86400 then "\($s / 3600 | floor)h"
+      else "\($s / 86400 | floor)d"
+      end;
+  def decision:
+    if .reviewDecision == "APPROVED" then " " + ("APPROVED" | green)
+    elif .reviewDecision == "CHANGES_REQUESTED" then " " + ("CHANGES" | red)
+    else ""
+    end;
+  def draft: if .isDraft then " " + ("DRAFT" | gray) else "" end;
+  def reviewers:
+    [.reviewRequests.nodes[]?.requestedReviewer | (.login // .slug)? // empty] | join(",");
+  def who:
+    if ._kind == "review" then "by " + (.author.login // "ghost")
+    else
+      reviewers as $r
+      | if $r == "" then "no reviewers requested" | yellow else "waiting on " + $r end
+    end;
+  def tag: if ._kind == "review" then "REVIEW" | magenta else "MINE  " | cyan end;
+
+  [
+    (if $mode != "mine" then .data.review.nodes[] | select(.url) | . + {_kind: "review"} else empty end),
+    (if $mode != "review" then .data.mine.nodes[] | select(.url) | . + {_kind: "mine"} else empty end)
+  ]
+  | unique_by(.url)
+  | sort_by(.updatedAt) | reverse
+  | .[]
+  | [
+      .url,
+      "\(tag) \(.repository.nameWithOwner | blue)#\(.number)\(decision)\(draft) \(("+\(.additions)" | green))/\(("-\(.deletions)" | red)) \(.title | clean) \("(\(who), \(.updatedAt | ago))" | gray)",
+      (.headRefName // "")
+    ]
+  | join("\t")
+' <<< "$response"

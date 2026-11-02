@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Fuzzy-browse open GitHub PRs (all repos) awaiting your review or yours awaiting review; open in browser.
+fzpr_help() {
+  cat <<'EOF'
+Usage: fzpr [-r|-m]
+
+  (default)  both lists below, newest update first
+  -r         open PRs where your review is requested
+  -m         your open, non-draft PRs that are not yet approved
+  -h         show this help
+
+Keyboard shortcuts:
+  enter      open highlighted PR on github.com (picker stays open)
+  ctrl-y     copy PR URL
+  ctrl-b     copy head branch
+  ctrl-d     preview: diff
+  ctrl-s     preview: summary (files, commits, description)
+  ctrl-r     reload the PR list
+  alt-up     scroll preview up one line
+  alt-down   scroll preview down one line
+  alt-u      scroll preview up one page
+  alt-d      scroll preview down one page
+  esc        quit
+EOF
+}
+
+mode=all
+case "$1" in
+  -r) mode=review ;;
+  -m) mode=mine ;;
+  -h|--help)
+    fzpr_help
+    exit
+    ;;
+  "") ;;
+  *)
+    fzpr_help >&2
+    exit 2
+    ;;
+esac
+
+gls_require_command fzf || exit
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+header=$("$script_dir/helpers/fzf_wrap_header" --width-percent 40 --full-width-below 100 \
+  'enter: open in browser, ctrl-y: copy url, ctrl-b: copy branch, ctrl-d/ctrl-s: diff/summary preview, ctrl-r: reload') || exit
+
+rows=$(gh_pr_rows "$mode") || exit
+if [ -z "$rows" ]; then
+  echo "No PRs found"
+  exit 0
+fi
+
+printf '%s\n' "$rows" | fzf \
+  --ansi \
+  --no-mouse \
+  --delimiter=$'\t' \
+  --with-nth=2 \
+  --header="$header" \
+  --preview 'gh_fzf_preview_pr {1} summary' \
+  --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)' \
+  --bind="enter:execute-silent(gls_open_url {1})" \
+  --bind="ctrl-y:execute-silent(printf %s {1} | pbcopy)" \
+  --bind="ctrl-b:execute-silent(printf %s {3} | pbcopy)" \
+  --bind="ctrl-d:change-preview(gh_fzf_preview_pr {1} diff)" \
+  --bind="ctrl-s:change-preview(gh_fzf_preview_pr {1} summary)" \
+  --bind="ctrl-r:reload(gh_pr_rows $mode)" \
+  --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-down:preview-page-down,page-up:preview-page-up"
+status=$?
+# 130 = esc / ctrl-c, which is the normal way out since enter keeps the picker open.
+[ "$status" -eq 130 ] && exit 0
+exit "$status"

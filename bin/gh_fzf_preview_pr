@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Render the fzf preview for a GitHub PR: summary (files, commits, description) or diff.
+# Output is cached in /tmp and refreshed in the background once older than 5 minutes.
+# Usage: gh_fzf_preview_pr <pr-url> [summary|diff]
+url="$1"
+view="${2:-summary}"
+
+if [ -z "$url" ]; then
+  echo "Usage: gh_fzf_preview_pr <pr-url> [summary|diff]" >&2
+  exit 2
+fi
+
+case "$view" in
+  summary|diff) ;;
+  *)
+    echo "Unknown view: $view (expected summary or diff)" >&2
+    exit 2
+    ;;
+esac
+
+width="${FZF_PREVIEW_COLUMNS:-100}"
+cache_key=$(printf '%s' "$url" | sed 's#^https://##; s#[^A-Za-z0-9._-]#_#g')
+cachefile="/tmp/gh_fzf_preview_pr_v1_${view}_${cache_key}.txt"
+
+render_summary() {
+  local json
+  json=$(gh pr view "$url" --json title,body,author,state,isDraft,baseRefName,headRefName,reviewDecision,mergeable,files,commits,latestReviews,statusCheckRollup) || return
+
+  if ! jq -e '(.files | type == "array") and (.commits | type == "array")' >/dev/null <<< "$json"; then
+    echo "Unexpected response from gh pr view"
+    return 1
+  fi
+
+  jq -r '
+    def red: "\u001b[31m" + . + "\u001b[0m";
+    def green: "\u001b[32m" + . + "\u001b[0m";
+    def yellow: "\u001b[33m" + . + "\u001b[0m";
+    def bold: "\u001b[1m" + . + "\u001b[0m";
+    def gray: "\u001b[90m" + . + "\u001b[0m";
+    def check_state: (.conclusion // .state // "") | ascii_upcase;
+    def checks:
+      [.statusCheckRollup[]? | check_state] as $s
+      | if ($s | length) == 0 then "no checks"
+        else
+          ([$s[] | select(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")] | length) as $ok
+          | ([$s[] | select(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE")] | length) as $bad
+          | ($s | length) as $n
+          | "checks: \($ok)/\($n) ok"
+            + (if $bad > 0 then ", " + ("\($bad) failing" | red) else "" end)
+            + (if ($n - $ok - $bad) > 0 then ", " + ("\($n - $ok - $bad) pending" | yellow) else "" end)
+        end;
+    def review_line:
+      if (.latestReviews | length) == 0 then "reviews: none"
+      else "reviews: " + ([.latestReviews[] | "\(.author.login // "ghost") \(.state | ascii_downcase)"] | join(", "))
+      end;
+
+    (.title | bold),
+    ("\(.author.login // "ghost")  \(.headRefName) -> \(.baseRefName)" | gray),
+    "\(.reviewDecision // "REVIEW_REQUIRED" | ascii_downcase)  mergeable: \(.mergeable | ascii_downcase)  \(checks)",
+    review_line,
+    "",
+    ("Files (\(.files | length))" | bold),
+    (.files[] | "  " + ("+\(.additions)" | green) + "/" + ("-\(.deletions)" | red) + "  " + .path),
+    "",
+    ("Commits (\(.commits | length))" | bold),
+    (.commits[] | "  " + (.oid[0:7] | yellow) + " " + .messageHeadline),
+    "",
+    ("Description" | bold)
+  ' <<< "$json" || return
+
+  local body
+  body=$(jq -r '.body // ""' <<< "$json")
+  if [ -z "$body" ]; then
+    echo "(no description)"
+  elif command -v bat >/dev/null 2>&1; then
+    printf '%s\n' "$body" | bat --color=always --style=plain --language=markdown --terminal-width="$width"
+  else
+    printf '%s\n' "$body"
+  fi
+}
+
+render_diff() {
+  if command -v delta >/dev/null 2>&1; then
+    gh pr diff "$url" --color=never | delta --width="$width" --paging=never
+  else
+    gh pr diff "$url" --color=always
+  fi
+}
+
+render() {
+  local tmpfile
+  tmpfile=$(mktemp "${cachefile}.XXXXXX") || return
+  if "render_$view" > "$tmpfile" 2>&1; then
+    mv "$tmpfile" "$cachefile"
+  else
+    cat "$tmpfile"
+    rm -f "$tmpfile"
+    return 1
+  fi
+}
+
+if [ -s "$cachefile" ]; then
+  cat "$cachefile"
+  if [ -n "$(find "$cachefile" -mmin +5 2>/dev/null)" ]; then
+    (render >/dev/null 2>&1 &)
+  fi
+else
+  render && cat "$cachefile"
+fi
