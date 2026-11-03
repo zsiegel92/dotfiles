@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Watch `ghpr` output (PRs across all repos), refreshing every 10s. Accepts ghpr's flags.
+case "$1" in
+  -r|-m|"") ;;
+  *)
+    echo "Usage: wghpr [-r|-m]" >&2
+    exit 2
+    ;;
+esac
+exec watch --color -n 10 ghpr "$@"

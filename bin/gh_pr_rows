@@ -4,7 +4,7 @@
 #   review  open PRs where your review is requested
 #   mine    your open, non-draft PRs that are not yet approved
 #   all     both (default)
-# Output: one tab-separated row per PR, newest update first:
+# Output: one tab-separated row per PR, newest first by creation date (stable across refreshes):
 #   url <TAB> display line <TAB> head branch
 mode="${1:-all}"
 case "$mode" in
@@ -28,6 +28,7 @@ fragment PrFields on PullRequest {
   number
   title
   isDraft
+  createdAt
   updatedAt
   reviewDecision
   additions
@@ -106,7 +107,7 @@ jq -r --arg mode "$mode" '
     (if $mode != "review" then .data.mine.nodes[] | select(.url) | . + {_kind: "mine"} else empty end)
   ]
   | unique_by(.url)
-  | sort_by(.updatedAt) | reverse
+  | sort_by(.createdAt, .url) | reverse
   | .[]
   | [
       .url,

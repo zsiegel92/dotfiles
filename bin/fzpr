@@ -4,7 +4,7 @@ fzpr_help() {
   cat <<'EOF'
 Usage: fzpr [-r|-m]
 
-  (default)  both lists below, newest update first
+  (default)  both lists below, newest created first
   -r         open PRs where your review is requested
   -m         your open, non-draft PRs that are not yet approved
   -h         show this help

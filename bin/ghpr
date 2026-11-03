@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# List open GitHub PRs (all repos) awaiting your review or yours awaiting review (non-interactive fzpr).
+# Usage: ghpr [-r|-m]
+#   (default)  both lists, newest created first
+#   -r         open PRs where your review is requested
+#   -m         your open, non-draft PRs that are not yet approved
+mode=all
+case "$1" in
+  -r) mode=review ;;
+  -m) mode=mine ;;
+  "") ;;
+  *)
+    echo "Usage: ghpr [-r|-m]" >&2
+    exit 2
+    ;;
+esac
+
+rows=$(gh_pr_rows "$mode") || exit
+if [ -z "$rows" ]; then
+  echo "No PRs found"
+  exit 0
+fi
+# Column 2 of gh_pr_rows is the human-readable display line.
+printf '%s\n' "$rows" | cut -f2
