@@ -20,11 +20,11 @@ esac
 
 width="${FZF_PREVIEW_COLUMNS:-100}"
 cache_key=$(printf '%s' "$url" | sed 's#^https://##; s#[^A-Za-z0-9._-]#_#g')
-cachefile="/tmp/gh_fzf_preview_pr_v1_${view}_${cache_key}.txt"
+cachefile="/tmp/gh_fzf_preview_pr_v2_${view}_${cache_key}.txt"
 
 render_summary() {
   local json
-  json=$(gh pr view "$url" --json title,body,author,state,isDraft,baseRefName,headRefName,reviewDecision,mergeable,files,commits,latestReviews,statusCheckRollup) || return
+  json=$(gh pr view "$url" --json title,body,author,state,isDraft,baseRefName,headRefName,reviewDecision,mergeable,files,commits,latestReviews,reviewRequests,statusCheckRollup) || return
 
   if ! jq -e '(.files | type == "array") and (.commits | type == "array")' >/dev/null <<< "$json"; then
     echo "Unexpected response from gh pr view"
@@ -49,15 +49,26 @@ render_summary() {
             + (if $bad > 0 then ", " + ("\($bad) failing" | red) else "" end)
             + (if ($n - $ok - $bad) > 0 then ", " + ("\($n - $ok - $bad) pending" | yellow) else "" end)
         end;
-    def review_line:
-      if (.latestReviews | length) == 0 then "reviews: none"
-      else "reviews: " + ([.latestReviews[] | "\(.author.login // "ghost") \(.state | ascii_downcase)"] | join(", "))
-      end;
+    def review_state_label:
+      (ascii_downcase | gsub("_"; " ")) as $label
+      | if . == "APPROVED" then $label | green
+        elif . == "CHANGES_REQUESTED" then $label | red
+        elif . == "REQUESTED" then $label | yellow
+        else $label | gray end;
+    # Pending requests win over an earlier review (re-requested reviewers are waiting on them again).
+    def reviewers_line:
+      [.reviewRequests[]? | (.login // .slug // .name // "ghost")] as $requested
+      | ([$requested[] | {who: ., state: "REQUESTED"}]
+         + [.latestReviews[]? | {who: (.author.login // "ghost"), state: .state}
+            | select(.who as $w | $requested | index($w) | not)]) as $all
+      | if ($all | length) == 0 then "reviewers: none"
+        else "reviewers: " + ([$all[] | .who + " " + (.state | review_state_label)] | join(", "))
+        end;
 
     (.title | bold),
     ("\(.author.login // "ghost")  \(.headRefName) -> \(.baseRefName)" | gray),
     "\(.reviewDecision // "REVIEW_REQUIRED" | ascii_downcase)  mergeable: \(.mergeable | ascii_downcase)  \(checks)",
-    review_line,
+    reviewers_line,
     "",
     ("Files (\(.files | length))" | bold),
     (.files[] | "  " + ("+\(.additions)" | green) + "/" + ("-\(.deletions)" | red) + "  " + .path),
