@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open the MR URL from a clean-local-branches fzf row.
+# Open the MR URL from a clean-local-branches-glab fzf row.
 
 row="$1"
 

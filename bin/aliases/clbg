@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for clean-local-branches-gh.
+exec clean-local-branches-gh "$@"

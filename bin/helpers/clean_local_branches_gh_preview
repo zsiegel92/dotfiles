@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Render the fzf preview for clean-local-branches-gh.
+
+row="$1"
+
+IFS=$'\t' read -r branch display kind remote_status pr_number base_branch url pr_sha tip updated_at _ <<< "$row"
+
+if [ -z "$branch" ]; then
+  exit
+fi
+
+log_branch() {
+  git log --oneline --graph --decorate --color=always --date=short --pretty=format:'%C(auto)%h %ad | %C(reset)%s%C(auto)%d%C(reset) [%an]' -n 40 "$branch" --
+}
+
+printf 'Branch: %s\n' "$branch"
+printf 'Remote: %s\n' "$remote_status"
+
+if [ "$kind" = "no-pr" ]; then
+  printf 'GitHub: no PR found for this branch\n\n'
+  log_branch
+  exit
+fi
+
+printf 'GitHub: %s #%s -> %s\n' "$kind" "$pr_number" "$base_branch"
+case "$tip" in
+  match) printf 'Tip: local tip == PR head %s\n' "${pr_sha:0:12}" ;;
+  behind) printf 'Tip: local tip %s is behind PR head %s (all local commits are in the PR)\n' "$(git rev-parse --short=12 "$branch" 2>/dev/null)" "${pr_sha:0:12}" ;;
+esac
+[ -n "$updated_at" ] && printf 'Updated: %s\n' "$updated_at"
+[ -n "$url" ] && printf 'URL: %s\n' "$url"
+printf '\n'
+
+if [ -n "$url" ] && command -v gh_fzf_preview_pr >/dev/null 2>&1; then
+  gh_fzf_preview_pr "$url" summary
+else
+  log_branch
+fi

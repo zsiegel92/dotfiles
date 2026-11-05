@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Interactively delete local branches whose GitLab MR is done and unchanged.
-# Usage: clean-local-branches [-a|--all] [query]
+# Usage: clean-local-branches-glab [-a|--all] [query]
 
 usage() {
   cat <<'EOF'
-Usage: clean-local-branches [-a|--all] [--remote <name>] [query]
+Usage: clean-local-branches-glab [-a|--all] [--remote <name>] [query]
 
 Interactively delete local branches with fzf.
 
@@ -35,7 +35,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --remote)
       if [ -z "${2:-}" ]; then
-        echo "clean-local-branches: --remote requires a value" >&2
+        echo "clean-local-branches-glab: --remote requires a value" >&2
         exit 2
       fi
       remote="$2"
@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
       break
       ;;
     -*)
-      echo "clean-local-branches: unknown option $1" >&2
+      echo "clean-local-branches-glab: unknown option $1" >&2
       usage >&2
       exit 2
       ;;
@@ -75,7 +75,7 @@ open_helper="$bin_dir/helpers/clean_local_branches_open_mr"
 wrap_header_helper="$bin_dir/helpers/fzf_wrap_header"
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
-  echo "clean-local-branches: not inside a git repository" >&2
+  echo "clean-local-branches-glab: not inside a git repository" >&2
   exit 1
 }
 cd "$repo_root" || exit
@@ -171,7 +171,7 @@ all_rows=$(build_rows 1) || exit
 
 if [ -z "$default_rows" ] && [ "$include_no_mr" -eq 0 ]; then
   if [ -n "$all_rows" ]; then
-    echo "No merged/closed local branches matched. Run clean-local-branches -a to include branches with no MR."
+    echo "No merged/closed local branches matched. Run clean-local-branches-glab -a to include branches with no MR."
   else
     echo "No cleanable local branches found."
   fi

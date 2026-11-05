@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render the fzf preview for clean-local-branches.
+# Render the fzf preview for clean-local-branches-glab.
 
 row="$1"
 

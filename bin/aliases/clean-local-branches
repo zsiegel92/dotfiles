@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for clean-local-branches-gh (use clean-local-branches-glab for GitLab).
+exec clean-local-branches-gh "$@"

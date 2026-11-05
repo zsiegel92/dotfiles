@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# Interactively delete local branches whose GitHub PR is merged/closed and whose tip is contained in the PR.
+# Usage: clean-local-branches-gh [-a|--all] [--remote <name>] [query]
+
+usage() {
+  cat <<'EOF'
+Usage: clean-local-branches-gh [-a|--all] [--remote <name>] [query]
+
+Interactively delete local branches with fzf (GitHub version of clean-local-branches-glab).
+
+Default mode lists local branches with no open PR whose latest merged/closed GitHub PR
+has the same head as the local branch:
+  tip:match   local tip == PR head SHA
+  tip:behind  local tip is an ancestor of the PR head SHA (every local commit is in the PR)
+Branches with local commits that never made it into the PR are never listed.
+
+Options:
+  -a, --all        Also include local branches with no GitHub PR at all.
+  --remote <name>  Use this git remote for remote-exists/deleted status.
+  -h, --help       Show this help.
+
+In fzf:
+  tab       select branches
+  enter     delete selected branches with git branch -D
+  ctrl-o    open the highlighted branch's PR
+  ctrl-a    toggle no-PR branches
+EOF
+}
+
+include_no_pr=0
+remote=origin
+query_parts=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -a|--all)
+      include_no_pr=1
+      shift
+      ;;
+    --remote)
+      if [ -z "${2:-}" ]; then
+        echo "clean-local-branches-gh: --remote requires a value" >&2
+        exit 2
+      fi
+      remote="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit
+      ;;
+    --)
+      shift
+      query_parts+=("$@")
+      break
+      ;;
+    -*)
+      echo "clean-local-branches-gh: unknown option $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      query_parts+=("$1")
+      shift
+      ;;
+  esac
+done
+
+query="${query_parts[*]}"
+
+gls_require_command git || exit
+gls_require_command gh || exit
+gls_require_command jq || exit
+gls_require_command fzf || exit
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+preview_helper="$bin_dir/helpers/clean_local_branches_gh_preview"
+wrap_header_helper="$bin_dir/helpers/fzf_wrap_header"
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "clean-local-branches-gh: not inside a git repository" >&2
+  exit 1
+}
+cd "$repo_root" || exit
+
+if ! git remote get-url "$remote" >/dev/null 2>&1; then
+  first_remote=$(git remote | sed -n '1p')
+  if [ -n "$first_remote" ]; then
+    remote="$first_remote"
+  fi
+fi
+
+repo_json=$(gh repo view --json owner,name) || exit
+if ! jq -e '(.owner.login | type == "string") and (.name | type == "string")' >/dev/null <<< "$repo_json"; then
+  echo "clean-local-branches-gh: unexpected response from gh repo view" >&2
+  exit 1
+fi
+repo_owner=$(jq -r '.owner.login' <<< "$repo_json")
+repo_name=$(jq -r '.name' <<< "$repo_json")
+
+current_branch=$(git branch --show-current)
+remote_head=$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
+remote_head=${remote_head#"$remote/"}
+
+branches=()
+oids=()
+while IFS=$'\t' read -r branch oid; do
+  [ -n "$branch" ] || continue
+  [ "$branch" = "$current_branch" ] && continue
+  [ -n "$remote_head" ] && [ "$branch" = "$remote_head" ] && continue
+  branches+=("$branch")
+  oids+=("$oid")
+done < <(git for-each-ref --format='%(refname:short)%09%(objectname)' refs/heads)
+
+if [ "${#branches[@]}" -eq 0 ]; then
+  echo "No cleanable local branches found."
+  exit
+fi
+
+# Fetch PRs per branch via aliased GraphQL fields, in chunks to keep queries small.
+# Result: JSON array of {branch, oid, prs: [...]}, one entry per local branch.
+fetch_prs() {
+  local chunk_size=40
+  local start end i
+  local chunks=()
+
+  for ((start = 0; start < ${#branches[@]}; start += chunk_size)); do
+    end=$((start + chunk_size))
+    [ "$end" -gt "${#branches[@]}" ] && end=${#branches[@]}
+
+    local var_decls="" fields="" args=()
+    for ((i = start; i < end; i++)); do
+      var_decls+=", \$b$i: String!"
+      fields+="
+    b$i: pullRequests(headRefName: \$b$i, first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number state headRefOid baseRefName title url updatedAt mergedAt }
+    }"
+      args+=(-f "b$i=${branches[$i]}")
+    done
+
+    local gql="query(\$owner: String!, \$name: String!$var_decls) {
+  repository(owner: \$owner, name: \$name) {$fields
+  }
+}"
+
+    local response
+    response=$(gh api graphql -f query="$gql" -f owner="$repo_owner" -f name="$repo_name" "${args[@]}") || return
+
+    # Validate the response shape before trusting any of it.
+    if ! jq -e --argjson start "$start" --argjson end "$end" '
+      (.errors | not)
+      and (.data.repository | type == "object")
+      and ([range($start; $end) as $i | .data.repository["b\($i)"].nodes | type == "array"] | all)
+    ' >/dev/null <<< "$response"; then
+      echo "Unexpected response from GitHub:" >&2
+      jq . <<< "$response" >&2 2>/dev/null || printf '%s\n' "$response" >&2
+      return 1
+    fi
+
+    chunks+=("$(jq -c --argjson start "$start" --argjson end "$end" '
+      [range($start; $end) as $i | {i: $i, prs: .data.repository["b\($i)"].nodes}]
+    ' <<< "$response")") || return
+  done
+
+  local branch_info
+  branch_info=$(
+    for ((i = 0; i < ${#branches[@]}; i++)); do
+      printf '%s\t%s\n' "${branches[$i]}" "${oids[$i]}"
+    done | jq -Rn '[inputs | split("\t") | {branch: .[0], oid: .[1]}]'
+  ) || return
+
+  printf '%s\n' "${chunks[@]}" |
+    jq -s --argjson info "$branch_info" '
+      add
+      | map(. as $c | $info[$c.i] + {prs: $c.prs})
+    '
+}
+
+echo "Looking up GitHub PRs for ${#branches[@]} local branch(es)..." >&2
+prs_json=$(fetch_prs) || exit
+
+# Decide tip status for each done PR: match, behind (local tip is an ancestor of PR head), or unrelated.
+# The ancestor check needs the PR head commit locally; if it's missing we can't prove safety, so skip it.
+tip_status() {
+  local local_oid="$1" pr_oid="$2"
+  if [ "$local_oid" = "$pr_oid" ]; then
+    echo match
+  elif git cat-file -e "${pr_oid}^{commit}" 2>/dev/null &&
+    git merge-base --is-ancestor "$local_oid" "$pr_oid" 2>/dev/null; then
+    echo behind
+  else
+    echo diverged
+  fi
+}
+
+tip_statuses=$(
+  jq -r '.[] | .oid as $oid | .prs[] | select(.state != "OPEN") | "\($oid)\t\(.headRefOid)"' <<< "$prs_json" |
+    sort -u |
+    while IFS=$'\t' read -r local_oid pr_oid; do
+      printf '%s\t%s\t%s\n' "$local_oid" "$pr_oid" "$(tip_status "$local_oid" "$pr_oid")"
+    done |
+    jq -Rn '[inputs | split("\t") | {key: "\(.[0]):\(.[1])", value: .[2]}] | from_entries'
+) || exit
+
+remote_branches_json=$(
+  if remote_heads_output=$(git ls-remote --heads "$remote" 2>/dev/null); then
+    printf '%s\n' "$remote_heads_output" |
+      awk '$2 ~ /^refs\/heads\// { sub(/^refs\/heads\//, "", $2); print $2 }' |
+      jq -R -s 'split("\n") | map(select(length > 0))'
+  else
+    git for-each-ref --format='%(refname:short)' "refs/remotes/$remote" |
+      sed -e "s#^$remote/##" -e '/^HEAD$/d' |
+      jq -R -s 'split("\n") | map(select(length > 0))'
+  fi
+) || exit
+
+build_rows() {
+  local include_no_pr_arg="$1"
+
+  jq -nr \
+    --arg include_no_pr "$include_no_pr_arg" \
+    --argjson entries "$prs_json" \
+    --argjson tips "$tip_statuses" \
+    --argjson remote_branches "$remote_branches_json" '
+      def clean: tostring | gsub("[\t\r\n]"; " ");
+      def remote_status($branch): if any($remote_branches[]; . == $branch) then "remote:exists" else "remote:deleted" end;
+      def color($kind):
+        if $kind == "merged" then "\u001b[35m" + . + "\u001b[0m"
+        elif $kind == "closed" then "\u001b[31m" + . + "\u001b[0m"
+        else "\u001b[90m" + . + "\u001b[0m" end;
+      def gray: "\u001b[90m" + . + "\u001b[0m";
+      # Prefer a tip match over a behind match, merged over closed, then most recent (sort_by is stable).
+      def choose_done_pr:
+        sort_by(.updatedAt // "") | reverse
+        | sort_by(
+            (if ._tip == "match" then 0 else 1 end),
+            (if .state == "MERGED" then 0 else 1 end)
+          )
+        | first;
+
+      $entries[]
+      | . as $e
+      | select(any($e.prs[]; .state == "OPEN") | not)
+      | [$e.prs[]
+          | select(.state == "MERGED" or .state == "CLOSED")
+          | . + {_tip: ($tips["\($e.oid):\(.headRefOid)"] // "diverged")}
+          | select(._tip == "match" or ._tip == "behind")]
+      | choose_done_pr as $pr
+      | remote_status($e.branch) as $rs
+      | if $pr != null then
+          ($pr.state | ascii_downcase) as $kind
+          | "\($e.branch)\t\($e.branch)  \("[\($rs)] [tip:\($pr._tip)]" | gray)  \("[\($kind | ascii_upcase) #\($pr.number) -> \($pr.baseRefName)]" | color($kind))  \($pr.title | clean)\t\($kind)\t\($rs)\t\($pr.number)\t\($pr.baseRefName)\t\($pr.url)\t\($pr.headRefOid)\t\($pr._tip)\t\($pr.updatedAt // "")"
+        elif $include_no_pr == "1" and ($e.prs | length) == 0 then
+          "\($e.branch)\t\($e.branch)  \("[\($rs)]" | gray)  \("[NO PR]" | color("no-pr"))\tno-pr\t\($rs)\t\t\t\t\t\t"
+        else
+          empty
+        end
+    '
+}
+
+default_rows=$(build_rows 0) || exit
+all_rows=$(build_rows 1) || exit
+
+if [ -z "$default_rows" ] && [ "$include_no_pr" -eq 0 ]; then
+  if [ -n "$all_rows" ]; then
+    echo "No merged/closed local branches matched. Run clean-local-branches-gh -a to include branches with no PR."
+  else
+    echo "No cleanable local branches found."
+  fi
+  exit
+fi
+
+if [ -z "$all_rows" ]; then
+  echo "No cleanable local branches found."
+  exit
+fi
+
+current_query="$query"
+
+while true; do
+  if [ "$include_no_pr" -eq 1 ]; then
+    active_rows="$all_rows"
+    mode_label="showing merged/closed + no-PR branches"
+  else
+    active_rows="$default_rows"
+    mode_label="showing merged/closed branches"
+  fi
+
+  if [ -z "$active_rows" ]; then
+    include_no_pr=1
+    continue
+  fi
+
+  picker_header=$("$wrap_header_helper" --width-percent 40 --full-width-below 100 "tab: select, enter: git branch -D selected, ctrl-o: open PR, ctrl-a: toggle no-PR branches ($mode_label)") || exit
+
+  selected=$(
+    printf '%s\n' "$active_rows" |
+      fzf \
+        --query="$current_query" \
+        --print-query \
+        --expect=ctrl-a \
+        --multi \
+        --no-mouse \
+        --no-sort \
+        --tac \
+        --height 90% \
+        --ansi \
+        --border \
+        --wrap \
+        --delimiter=$'\t' \
+        --with-nth=2 \
+        --preview-window='right,60%,wrap,<100(down,50%,border-top,wrap)' \
+        --header="$picker_header" \
+        --bind="ctrl-o:execute-silent([ -n {7} ] && gls_open_url {7})" \
+        --bind="alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down" \
+        --preview="$preview_helper {}"
+  )
+  fzf_status=$?
+
+  if [ "$fzf_status" -ne 0 ]; then
+    exit "$fzf_status"
+  fi
+
+  current_query=${selected%%$'\n'*}
+  rest=${selected#*$'\n'}
+  pressed_key=${rest%%$'\n'*}
+  selected_rows=${rest#*$'\n'}
+
+  if [ "$pressed_key" = "$rest" ]; then
+    selected_rows=""
+  fi
+
+  if [ "$pressed_key" = ctrl-a ]; then
+    if [ "$include_no_pr" -eq 1 ]; then
+      include_no_pr=0
+    else
+      include_no_pr=1
+    fi
+    continue
+  fi
+
+  if [ -z "$selected_rows" ]; then
+    echo "No branches selected"
+    exit 1
+  fi
+
+  to_delete=()
+  while IFS=$'\t' read -r branch _; do
+    [ -n "$branch" ] || continue
+    to_delete+=("$branch")
+  done <<< "$selected_rows"
+
+  if [ "${#to_delete[@]}" -eq 0 ]; then
+    echo "No branches selected"
+    exit 1
+  fi
+
+  printf 'Deleting %d local branch(es) with git branch -D:\n' "${#to_delete[@]}"
+  printf '  %s\n' "${to_delete[@]}"
+  git branch -D -- "${to_delete[@]}"
+  exit
+done
