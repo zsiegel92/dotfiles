@@ -174,6 +174,33 @@ preview_unified_diff() {
     fi
 }
 
+# Print an added file's contents for the full-width side-by-side fallback.
+# Branch mode reads the committed HEAD version; the working tree may have moved on.
+added_file_contents() {
+    local base_ref="$1" f="$2"
+
+    if [ -n "$base_ref" ]; then
+        git show "HEAD:./$f"
+    else
+        cat -- "$f"
+    fi
+}
+
+# Added files have no old side, so a side-by-side diff would leave half the
+# width empty. Callers show them full width instead.
+is_added_file() {
+    local base_ref="$1" f="$2"
+
+    if [ -n "$base_ref" ]; then
+        [ -n "$(git diff --no-renames --name-only --diff-filter=A "$base_ref"..HEAD -- "$f")" ]
+    elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        # Intent-to-add files are tracked but still diff as added.
+        [ -n "$(git diff --no-renames --name-only --diff-filter=A -- "$f")" ]
+    else
+        [ -f "$f" ]
+    fi
+}
+
 preview_file_side_by_side() {
     local base_ref f cols
     base_ref="$1"
@@ -190,16 +217,16 @@ preview_file_side_by_side() {
         cols=200
     fi
 
-    if [ -n "$base_ref" ]; then
+    if is_added_file "$base_ref" "$f"; then
+        if command -v bat >/dev/null 2>&1; then
+            added_file_contents "$base_ref" "$f" | bat --color=always --style=numbers --terminal-width="$cols" --file-name="$f" -- -
+        else
+            added_file_contents "$base_ref" "$f"
+        fi
+    elif [ -n "$base_ref" ]; then
         git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --paging=never
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --paging=never
-    elif [ -f "$f" ]; then
-        if command -v bat >/dev/null 2>&1; then
-            bat --color=always --style=numbers --terminal-width="$cols" -- "$f"
-        else
-            cat -- "$f"
-        fi
     fi
 }
 
@@ -240,16 +267,16 @@ page_file_side_by_side() {
     hunk_pager="less -R -Ps'$hunk_pager_legend' -Pm'$hunk_pager_legend' -PM'$hunk_pager_legend'"
     file_pager="less -R -Ps'$file_pager_legend' -Pm'$file_pager_legend' -PM'$file_pager_legend'"
 
-    if [ -n "$base_ref" ]; then
+    if is_added_file "$base_ref" "$f"; then
+        if command -v bat >/dev/null 2>&1; then
+            added_file_contents "$base_ref" "$f" | bat --color=always --paging=always --pager "$file_pager" --style=numbers --terminal-width="$cols" --file-name="$f" -- -
+        else
+            added_file_contents "$base_ref" "$f" | less -R "-Ps$file_pager_legend" "-Pm$file_pager_legend" "-PM$file_pager_legend"
+        fi
+    elif [ -n "$base_ref" ]; then
         git diff --color=always "$base_ref"..HEAD -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$hunk_pager"
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f" | delta --side-by-side --line-numbers --width "$cols" --navigate --paging=always --pager "$hunk_pager"
-    elif [ -f "$f" ]; then
-        if command -v bat >/dev/null 2>&1; then
-            bat --color=always --paging=always --pager "$file_pager" --style=numbers --terminal-width="$cols" -- "$f"
-        else
-            less -R "-Ps$file_pager_legend" "-Pm$file_pager_legend" "-PM$file_pager_legend" -- "$f"
-        fi
     fi
 }
 
