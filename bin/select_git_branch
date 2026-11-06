@@ -169,13 +169,30 @@ select_git_branch_from_selected_row() {
   printf '%s\n' "$selected_branch"
 }
 
+rows_for_view_mode() {
+  case "$1" in
+    tree) printf '%s\n' "$branch_rows" | select_git_branch_tree_rows ;;
+    full-dag) printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows ;;
+    handmade-dag) printf '%s\n' "$branch_rows" | select_git_branch_handmade_dag_rows ;;
+    git-graph) select_git_branch_git_graph_rows ;;
+    *) printf '%s\n' "$branch_rows" ;;
+  esac
+}
+
+# Internal: invoked by the fzf switch+stay reload. Prints the rows for a view
+# mode, read fresh so the HEAD marker reflects the branch just checked out.
+if [ "$1" = "--rows" ]; then
+  branch_rows=$(select_git_branch_rows) || exit
+  rows_for_view_mode "$2"
+  exit
+fi
+
 branch_rows=$(select_git_branch_rows) || exit
 tree_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_tree_rows) || exit
 view_mode="$initial_view_mode"
 current_query="$query"
 preview_scope="$initial_preview_scope"
 switch_stay_key_label=
-switch_stay_bind=
 printf -v quoted_self '%q' "$SELF"
 
 if [ "$enable_switch_stay" -eq 1 ]; then
@@ -186,15 +203,17 @@ if [ "$enable_switch_stay" -eq 1 ]; then
     switch_stay_key_label=ctrl-j/alt-enter
     switch_stay_keys=(ctrl-j alt-enter)
   fi
-
-  switch_stay_bind=
-  for key in "${switch_stay_keys[@]}"; do
-    [ -n "$switch_stay_bind" ] && switch_stay_bind+=","
-    switch_stay_bind+="$key:execute($quoted_self --switch-stay-branch {1})"
-  done
 fi
 
 while true; do
+  switch_stay_bind=
+  if [ "$enable_switch_stay" -eq 1 ]; then
+    for key in "${switch_stay_keys[@]}"; do
+      [ -n "$switch_stay_bind" ] && switch_stay_bind+=","
+      switch_stay_bind+="$key:execute($quoted_self --switch-stay-branch {1})+reload($quoted_self --rows $view_mode)"
+    done
+  fi
+
   switch_stay_header=
   if [ -n "$switch_stay_key_label" ]; then
     switch_stay_header="$switch_stay_key_label: switch+stay, "
