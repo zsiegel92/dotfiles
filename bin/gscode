@@ -34,12 +34,12 @@ Usage:
 Examples:
   gscode -b main
   gscode -b HEAD~1
-  gscode --branch origin/main zsh
-  gscode -g zsh
+  gscode --branch origin/main blah
+  gscode -g blah
   gscode -c main..feature
-  gscode -c origin/main...HEAD zsh
+  gscode -c origin/main...HEAD blah
   gscode -s
-  gscode -s -b main zsh
+  gscode -s -b main blah
 
 Default mode lists dirty tracked and untracked files.
 Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
