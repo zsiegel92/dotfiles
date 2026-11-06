@@ -62,6 +62,25 @@ proc check_query_toggle_action {gscode} {
     puts "PASS: query-toggle preview state"
 }
 
+# Each of these must be rejected before the picker starts.
+proc check_compare_option_validation {gscode} {
+    foreach {label arguments expected} {
+        "-c with -b" {-c HEAD~1..HEAD -b HEAD~1} {choose only one of}
+        "-c with -g" {-c HEAD~1..HEAD -g} {choose only one of}
+        "-c with --branch=" {-c HEAD~1..HEAD --branch=HEAD~1} {choose only one of}
+        "-c without a range" {-c HEAD} {expects a range like A..B or A...B}
+        "-c with an unknown ref" {-c no-such-ref..HEAD} {branch/ref not found: no-such-ref}
+        "-b with a range" {-b HEAD~1..HEAD} {use -c/--compare}
+    } {
+        if {![catch {exec $gscode {*}$arguments 2>@1} output]} {
+            fail "$label should have been rejected"
+        }
+        assert_contains "$label error message" $output $expected
+    }
+
+    puts "PASS: -c/--compare validation and exclusivity"
+}
+
 proc resize_smoke {gscode mode arguments} {
     log_user 0
     spawn -noecho $gscode {*}$arguments
@@ -123,6 +142,9 @@ if {[string first {--no-sort} $source] >= 0} {
 check_layout_actions $gscode
 check_current_file_preview_actions $gscode
 check_query_toggle_action $gscode
+check_compare_option_validation $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
+resize_smoke $gscode "compare mode" [list -c HEAD~1..HEAD]
+resize_smoke $gscode "side-by-side compare mode" [list -s -c HEAD~1...HEAD]
 puts "PASS: all gscode TUI smoke tests"

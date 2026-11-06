@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # Repeatedly fuzzy-select changed files and open each in VS Code.
-# Usage: gscode [-s|--side-by-side] [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree] [query]
+# Usage: gscode [-s|--side-by-side] [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree | -c <A..B|A...B> | --compare <A..B|A...B>] [query]
 #
 # Keys in the picker:
 #   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
@@ -26,6 +26,9 @@ Usage:
   gscode [-s|--side-by-side] --branch <branch-or-ref> [query]
   gscode [-s|--side-by-side] --branch=<branch-or-ref> [query]
   gscode [-s|--side-by-side] -g|--graph|--tree [query]
+  gscode [-s|--side-by-side] -c <A..B|A...B> [query]
+  gscode [-s|--side-by-side] --compare <A..B|A...B> [query]
+  gscode [-s|--side-by-side] --compare=<A..B|A...B> [query]
   gscode -h | --help
 
 Examples:
@@ -33,12 +36,16 @@ Examples:
   gscode -b HEAD~1
   gscode --branch origin/main zsh
   gscode -g zsh
+  gscode -c main..feature
+  gscode -c origin/main...HEAD zsh
   gscode -s
   gscode -s -b main zsh
 
 Default mode lists dirty tracked and untracked files.
 Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
 Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
+Compare mode (-c/--compare) lists files changed in an explicit range, with git's own meaning: A..B compares A to B, and A...B compares merge-base(A, B) to B. An omitted side means HEAD.
+-b, -g and -c are mutually exclusive.
 Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side preview. Ctrl-S and Esc still return to the unified preview.
 Picker rows use `(status) path (+added -deleted)`. Untracked files appear as `A`; binary line counts appear as `?`.
 
@@ -68,8 +75,56 @@ Interactive side-by-side pager (press Enter from the side-by-side preview):
 
 Closing either nested view restores the gscode picker. To quit gscode entirely, return to the picker and press Esc.
 
-In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb.
+In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb. In compare mode, Ctrl-D compares the two sides of the range as committed, so the working tree is not involved.
+Enter, Ctrl-P and content search always use the file in the working tree, even in branch/ref and compare modes.
 EOF
+}
+
+# Everything below that takes a base_ref accepts one of two shapes: a plain ref
+# from -b/-g, compared as <ref>..HEAD, or a full A..B / A...B range from -c,
+# used exactly as given. Git forbids ".." inside ref names, so the two cannot
+# be confused.
+is_range_spec() {
+    [[ "$1" == *..* ]]
+}
+
+# Print what `git diff` should be given for a base_ref.
+diff_range() {
+    if is_range_spec "$1"; then
+        print -r -- "$1"
+    else
+        print -r -- "$1..HEAD"
+    fi
+}
+
+# Split and validate a -c range. Sets compare_left, compare_right and
+# compare_three_dot. As in git, an omitted side means HEAD.
+parse_compare_range() {
+    local spec="$1" sep
+
+    if ! is_range_spec "$spec"; then
+        echo "gscode: -c/--compare expects a range like A..B or A...B, got: $spec" >&2
+        return 2
+    fi
+
+    if [[ "$spec" == *...* ]]; then
+        sep='...'
+        compare_three_dot=1
+    else
+        sep='..'
+        compare_three_dot=0
+    fi
+    compare_left="${spec%%${sep}*}"
+    compare_right="${spec#*${sep}}"
+    : "${compare_left:=HEAD}" "${compare_right:=HEAD}"
+
+    local side
+    for side in "$compare_left" "$compare_right"; do
+        if ! git rev-parse --verify --quiet "${side}^{commit}" >/dev/null; then
+            echo "gscode: branch/ref not found: $side" >&2
+            return 1
+        fi
+    done
 }
 
 brighten_bat_highlight() {
@@ -118,7 +173,7 @@ preview_file() {
     [ -z "$f" ] && return 0
 
     if [ -n "$base_ref" ]; then
-        git diff --color=always "$base_ref"..HEAD -- "$f" | preview_unified_diff
+        git diff --color=always "$(diff_range "$base_ref")" -- "$f" | preview_unified_diff
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f" | preview_unified_diff
     else
@@ -180,7 +235,7 @@ side_by_side_source_diff() {
     local base_ref="$1" f="$2"
 
     if [ -n "$base_ref" ]; then
-        git diff --color=always "$base_ref"..HEAD -- "$f"
+        git diff --color=always "$(diff_range "$base_ref")" -- "$f"
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         git diff --color=always -- "$f"
     elif [ -f "$f" ]; then
@@ -195,7 +250,7 @@ is_one_sided_file() {
     local base_ref="$1" f="$2"
 
     if [ -n "$base_ref" ]; then
-        [ -n "$(git diff --no-renames --name-only --diff-filter=AD "$base_ref"..HEAD -- "$f")" ]
+        [ -n "$(git diff --no-renames --name-only --diff-filter=AD "$(diff_range "$base_ref")" -- "$f")" ]
     elif git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         # Intent-to-add files are tracked but still diff as added.
         [ -n "$(git diff --no-renames --name-only --diff-filter=AD -- "$f")" ]
@@ -550,12 +605,26 @@ adjust_selector_action() {
 }
 
 open_diff_file() {
-    local base_ref f repo_path basename LEFT
+    local base_ref f repo_path basename LEFT RIGHT left_rev
     base_ref="$1"
     f="$2"
     [ -z "$f" ] && return 0
 
-    if [ -n "$base_ref" ]; then
+    if is_range_spec "$base_ref"; then
+        # Both sides come from git, so the working tree is not part of the comparison.
+        parse_compare_range "$base_ref" || return
+        left_rev="$compare_left"
+        if [ "$compare_three_dot" -eq 1 ]; then
+            left_rev=$(git merge-base "$compare_left" "$compare_right") || return
+        fi
+        basename=$(basename "$f")
+        LEFT="/tmp/__base__${basename}"
+        RIGHT="/tmp/__compare__${basename}"
+        # `./` makes git read the path relative to the current directory, which is how the picker lists files.
+        git show "${left_rev}:./${f}" >"$LEFT" 2>/dev/null || : >"$LEFT"
+        git show "${compare_right}:./${f}" >"$RIGHT" 2>/dev/null || : >"$RIGHT"
+        code --diff "$LEFT" "$RIGHT"
+    elif [ -n "$base_ref" ]; then
         repo_path=$(git ls-files --full-name -- "$f" 2>/dev/null | sed -n '1p')
         [ -z "$repo_path" ] && repo_path="$f"
         basename=$(basename "$f")
@@ -710,6 +779,7 @@ if [ "$1" = "--diff-file" ]; then
 fi
 
 base_ref=
+compare_range=
 graph_parent_mode=0
 start_side_by_side=0
 fzf_query_parts=()
@@ -734,6 +804,21 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             fi
             ;;
+        -c|--compare)
+            shift
+            if [ -z "$1" ]; then
+                echo "gscode: -c/--compare requires a range like A..B or A...B" >&2
+                exit 2
+            fi
+            compare_range="$1"
+            ;;
+        --compare=*)
+            compare_range="${1#--compare=}"
+            if [ -z "$compare_range" ]; then
+                echo "gscode: --compare requires a non-empty range like A..B or A...B" >&2
+                exit 2
+            fi
+            ;;
         -g|--graph|--tree)
             graph_parent_mode=1
             ;;
@@ -755,12 +840,26 @@ done
 fzf_query="${(j: :)fzf_query_parts}"
 quoted_self=${(q)SELF}
 
-if [ "$graph_parent_mode" -eq 1 ]; then
-    if [ -n "$base_ref" ]; then
-        echo "gscode: choose either -g/--graph/--tree or -b/--branch, not both" >&2
-        exit 2
-    fi
+selected_modes=0
+[ "$graph_parent_mode" -eq 1 ] && selected_modes=$((selected_modes + 1))
+[ -n "$base_ref" ] && selected_modes=$((selected_modes + 1))
+[ -n "$compare_range" ] && selected_modes=$((selected_modes + 1))
+if [ "$selected_modes" -gt 1 ]; then
+    echo "gscode: choose only one of -g/--graph/--tree, -b/--branch, or -c/--compare" >&2
+    exit 2
+fi
 
+if is_range_spec "$base_ref"; then
+    echo "gscode: -b/--branch takes a single ref, not a range; use -c/--compare for $base_ref" >&2
+    exit 2
+fi
+
+if [ -n "$compare_range" ]; then
+    parse_compare_range "$compare_range" || exit
+    base_ref="$compare_range"
+fi
+
+if [ "$graph_parent_mode" -eq 1 ]; then
     current_branch=$(git branch --show-current)
     if [ -z "$current_branch" ]; then
         echo "gscode: -g requires being on a local branch" >&2
@@ -789,12 +888,21 @@ for key in "${open_stay_keys[@]}"; do
 done
 
 if [ -n "$base_ref" ]; then
-    if ! git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null; then
-        echo "gscode: branch/ref not found: $base_ref" >&2
-        exit 1
+    if [ -n "$compare_range" ]; then
+        if [ "$compare_three_dot" -eq 1 ]; then
+            diff_sides_label="merge-base vs $compare_right"
+        else
+            diff_sides_label="$compare_left vs $compare_right"
+        fi
+    else
+        if ! git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null; then
+            echo "gscode: branch/ref not found: $base_ref" >&2
+            exit 1
+        fi
+        diff_sides_label="$base_ref vs working"
     fi
     quoted_base_ref=${(q)base_ref}
-    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($base_ref vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($diff_sides_label) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {2}"

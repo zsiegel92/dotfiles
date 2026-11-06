@@ -27,7 +27,11 @@ root_relative_records() {
     local diff_target
 
     if [ -n "$base_ref" ]; then
-        diff_target="${base_ref}..HEAD"
+        # A plain ref is compared with HEAD; a full A..B or A...B range (gscode -c) is used as given.
+        case "$base_ref" in
+            *..*) diff_target="$base_ref" ;;
+            *) diff_target="${base_ref}..HEAD" ;;
+        esac
         while IFS=$'\t' read -r status repo_path additions deletions stats_path; do
             [ -n "$repo_path" ] || continue
             if [ "$repo_path" != "$stats_path" ]; then
