@@ -14,6 +14,19 @@ if [ "$1" = "--switch-stay-branch" ]; then
   exit
 fi
 
+# Internal: invoked by the fzf ctrl-x binding. Copies "<parent>..<branch>", or
+# nothing when the branch has no inferred parent.
+if [ "$1" = "--copy-branch-range" ]; then
+  branch="$2"
+  if [ -n "$branch" ]; then
+    parent=$("$SCRIPT_DIR/gparent" "$branch" 2>/dev/null) || exit
+    if [ -n "$parent" ]; then
+      printf '%s..%s' "$parent" "$branch" | pbcopy
+    fi
+  fi
+  exit
+fi
+
 initial_view_mode=list
 initial_preview_scope=main
 enable_switch_stay=0
@@ -123,6 +136,7 @@ select_git_branch_fzf() {
     --header="$header"
     --bind="ctrl-w:execute-silent(sh -c 'branch=\$1; [ -n \"\$branch\" ] && glab mr view \"\$branch\" --web >/dev/null 2>&1 &' sh {1})"
     --bind="ctrl-b:execute-silent(sh -c 'if [ -n \"\$1\" ]; then printf \"%s\" \"\$1\" | pbcopy; fi' sh {1})"
+    --bind="ctrl-x:execute-silent($quoted_self --copy-branch-range {1})"
     --bind="alt-up:preview-up,alt-down:preview-down"
     --bind="enter:transform:[[ -n {1} ]] && echo accept || echo 'change-header:Select a branch row'"
     --preview "$preview_command"
@@ -162,9 +176,9 @@ current_query="$query"
 preview_scope="$initial_preview_scope"
 switch_stay_key_label=
 switch_stay_bind=
+printf -v quoted_self '%q' "$SELF"
 
 if [ "$enable_switch_stay" -eq 1 ]; then
-  printf -v quoted_self '%q' "$SELF"
   if printf 'x\n' | fzf --filter x --bind 'ctrl-enter:execute-silent(true)' >/dev/null 2>&1; then
     switch_stay_key_label=ctrl-enter
     switch_stay_keys=(ctrl-enter)
@@ -188,31 +202,31 @@ while true; do
 
   if [ "$view_mode" = tree ]; then
     active_rows="$tree_branch_rows"
-    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: list view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
   elif [ "$view_mode" = full-dag ]; then
     if [ -z "${full_dag_branch_rows+x}" ]; then
       full_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_full_dag_rows) || exit
     fi
 
     active_rows="$full_dag_branch_rows"
-    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: tree view, ctrl-f: list view, ctrl-h: handmade DAG view, ctrl-y: git graph view, preview: files vs parent"
   elif [ "$view_mode" = handmade-dag ]; then
     if [ -z "${handmade_dag_branch_rows+x}" ]; then
       handmade_dag_branch_rows=$(printf '%s\n' "$branch_rows" | select_git_branch_handmade_dag_rows) || exit
     fi
 
     active_rows="$handmade_dag_branch_rows"
-    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, ctrl-y: git graph view, alt-up/down: scroll preview"
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: list view, ctrl-y: git graph view, alt-up/down: scroll preview"
   elif [ "$view_mode" = git-graph ]; then
     if [ -z "${git_graph_branch_rows+x}" ]; then
       git_graph_branch_rows=$(select_git_branch_git_graph_rows) || exit
     fi
 
     active_rows="$git_graph_branch_rows"
-    header="enter: select branch row, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: list view, alt-up/down: scroll preview"
+    header="enter: select branch row, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: list view, alt-up/down: scroll preview"
   else
     active_rows="$branch_rows"
-    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview"
+    header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview"
   fi
 
   selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope" "$switch_stay_bind")
