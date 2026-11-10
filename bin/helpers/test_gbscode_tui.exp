@@ -1,0 +1,348 @@
+#!/usr/bin/expect -f
+
+# End-to-end test of gbscode (and select_git_branch --start-branch) in a real
+# pseudo-terminal. Run from anywhere with: bin/helpers/test_gbscode_tui.exp
+#
+# The test builds its own throwaway git repo, so it never touches your branches:
+#
+#   main <- feature-a <- feature-b
+#                     <- feature-c
+#   main <- hotfix
+#
+# Set GBSCODE_TEST_VERBOSE=1 to watch the terminal output while it runs.
+
+set timeout 30
+set helper_dir [file dirname [file normalize [info script]]]
+set bin_dir [file normalize [file join $helper_dir ..]]
+set gbscode [file join $bin_dir gbscode]
+set select_git_branch [file join $bin_dir select_git_branch]
+
+set fixture_dir [exec mktemp -d -t gbscode-test]
+
+proc cleanup {} {
+    global fixture_dir
+    catch {file delete -force $fixture_dir}
+}
+
+proc fail {message} {
+    cleanup
+    puts stderr "FAIL: $message"
+    exit 1
+}
+
+proc assert_equal {label actual expected} {
+    if {$actual ne $expected} {
+        fail "$label\nexpected: $expected\nactual:   $actual"
+    }
+}
+
+proc assert_not_equal {label actual unexpected} {
+    if {$actual eq $unexpected} {
+        fail "$label\nexpected anything but: $unexpected"
+    }
+}
+
+proc assert_contains {label actual expected} {
+    if {[string first $expected $actual] < 0} {
+        fail "$label\nexpected to contain: $expected\nactual:              $actual"
+    }
+}
+
+# ---------------------------------------------------------------- fixture repo
+
+proc run_git {repo args} {
+    # Explicit identity and no signing or hooks, so the user's own git config
+    # cannot change how the fixture is built.
+    exec git -C $repo -c user.name=gbscode-test -c user.email=gbscode-test@example.com \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null {*}$args
+}
+
+proc commit_file {repo name} {
+    set handle [open [file join $repo $name] w]
+    puts $handle "$name contents"
+    close $handle
+    run_git $repo add $name
+    run_git $repo commit -q -m "add $name"
+}
+
+proc build_fixture {repo} {
+    run_git $repo init -q -b main
+    commit_file $repo base.txt
+
+    run_git $repo checkout -q -b feature-a
+    commit_file $repo a.txt
+    run_git $repo checkout -q -b feature-b
+    commit_file $repo b.txt
+    run_git $repo checkout -q feature-a
+    run_git $repo checkout -q -b feature-c
+    commit_file $repo c.txt
+
+    run_git $repo checkout -q main
+    run_git $repo checkout -q -b hotfix
+    commit_file $repo h.txt
+    run_git $repo checkout -q main
+}
+
+proc current_branch {repo} {
+    return [run_git $repo symbolic-ref --short HEAD]
+}
+
+# --------------------------------------------------------------- terminal glue
+
+if {[info exists env(GBSCODE_TEST_VERBOSE)]} {
+    log_user 1
+} else {
+    log_user 0
+}
+set env(TERM) xterm-256color
+set env(PATH) "$bin_dir:$env(PATH)"
+
+# Start a command in the fixture repo inside a sized pty.
+#
+# fzf --height asks the terminal where the cursor is (ESC [ 6 n) and waits for
+# the answer, which a bare pty never gives; the expect_before below answers it.
+proc start {repo command args} {
+    global spawn_id
+    cd $repo
+    spawn -noecho $command {*}$args
+    if {[catch {exec stty -f $spawn_out(slave,name) rows 40 columns 200} error]} {
+        fail "could not size the pty: $error"
+    }
+    expect_before {
+        -re {\x1b\[6n} {
+            send "\x1b\[24;1R"
+            exp_continue
+        }
+    }
+}
+
+# Wait for the output to go quiet and return everything that arrived. This
+# replaces fixed sleeps, and it also discards output left over from the last
+# step so the next expect only sees what the next keypress produces.
+proc settle {} {
+    global spawn_id
+    set seen ""
+    expect {
+        -timeout 1 -re {.+} {
+            append seen $expect_out(buffer)
+            exp_continue
+        }
+        timeout {}
+        eof {}
+    }
+    return $seen
+}
+
+proc expect_text {text description} {
+    global spawn_id
+    expect {
+        -- $text {}
+        eof { fail "$description: process exited while waiting for \"$text\"" }
+        timeout { fail "$description: timed out waiting for \"$text\"" }
+    }
+}
+
+# Wait for the branch picker (every view's header starts this way).
+proc wait_for_picker {description} {
+    expect_text "enter: select branch" $description
+    settle
+}
+
+proc wait_for_exit {description expected_status} {
+    global spawn_id
+    expect {
+        eof {}
+        timeout { fail "$description: did not exit" }
+    }
+    set result [wait]
+    assert_equal "$description exit status" [lindex $result 3] $expected_status
+}
+
+proc press_down {count} {
+    global spawn_id
+    for {set index 0} {$index < $count} {incr index} {
+        send "\x1b\[B"
+        after 150
+    }
+    settle
+}
+
+# Each fixture branch adds exactly one file, so the files gscode lists for
+# "<parent>..<branch>" say which branch it opened. A wrong range would list
+# more than one file (for example main..feature-b lists a.txt and b.txt).
+set branch_for_file {a.txt feature-a b.txt feature-b c.txt feature-c h.txt hotfix}
+
+# Press Enter on the highlighted branch and wait for the gscode view. Returns
+# {branch terminal-output}.
+proc open_branch {description} {
+    global spawn_id branch_for_file
+    send "\r"
+    expect {
+        -re {\(A\) [a-z]+\.txt \(} {
+            set seen $expect_out(buffer)
+        }
+        "Press any key" {
+            fail "$description: the branch under the cursor has no parent, so gscode did not open (did the cursor move to main?)"
+        }
+        eof { fail "$description: process exited instead of opening gscode" }
+        timeout { fail "$description: gscode did not open" }
+    }
+    append seen [settle]
+
+    set files {}
+    foreach {row file} [regexp -all -inline {\(A\) ([a-z]+\.txt) \(} $seen] {
+        lappend files $file
+    }
+    set files [lsort -unique $files]
+    if {[llength $files] != 1} {
+        fail "$description: expected gscode to list only the branch's own file, got: $files"
+    }
+    return [list [dict get $branch_for_file [lindex $files 0]] $seen]
+}
+
+# Ctrl-C in gscode must land back in the branch picker, not the shell.
+proc leave_gscode {description} {
+    global spawn_id
+    send "\x03"
+    expect {
+        -- "enter: select branch" {}
+        eof { fail "$description: Ctrl-C in gscode exited instead of returning to the picker" }
+        timeout { fail "$description: picker did not come back after Ctrl-C in gscode" }
+    }
+    settle
+}
+
+# ----------------------------------------------------------------------- tests
+
+# The whole gbscode loop in one session: tree picker, side-by-side gscode, the
+# Ctrl-S toggle, Ctrl-C back to the picker, and where the cursor ends up.
+proc check_gbscode_flow {gbscode repo} {
+    global spawn_id
+    start $repo $gbscode
+
+    expect_text "files vs parent" "default view"
+    settle
+    puts "PASS: starts in the gbs -g tree view"
+
+    # The tree view puts the root branch (main) on the first row, so one Down
+    # moves to a branch that has a parent.
+    press_down 1
+    lassign [open_branch "first open"] first_branch seen
+    assert_contains "gscode starts side-by-side" $seen "side-by-side hunks"
+    puts "PASS: Enter opens gscode for $first_branch, starting side-by-side"
+
+    send "\x13"
+    assert_contains "Ctrl-S toggles back to the unified diff" [settle] "unified diff"
+    puts "PASS: Ctrl-S still toggles to the unified diff"
+
+    leave_gscode "first open"
+    assert_equal "Ctrl-C must not check anything out" [current_branch $repo] main
+    puts "PASS: Ctrl-C in gscode returns to the picker without checking out anything"
+
+    # Cursor preservation, checked two ways. Enter again should reopen the same
+    # branch...
+    lassign [open_branch "second open"] branch seen
+    assert_equal "cursor stays on the branch after returning" $branch $first_branch
+    assert_contains "gscode starts side-by-side on re-entry" $seen "side-by-side hunks"
+    leave_gscode "second open"
+
+    # ...and one Down from there must reach the next row. If the picker had
+    # reset to the first row, one Down would land on $first_branch again.
+    press_down 1
+    lassign [open_branch "third open"] branch seen
+    assert_not_equal "one Down after returning moves past the preserved cursor" $branch $first_branch
+    leave_gscode "third open"
+    puts "PASS: the picker cursor stays on the branch after returning from gscode"
+
+    send "\x03"
+    wait_for_exit "Ctrl-C in the picker" 130
+    puts "PASS: Ctrl-C in the picker exits"
+}
+
+# A branch with no inferred parent has no range to show.
+proc check_no_parent {gbscode repo} {
+    global spawn_id
+    start $repo $gbscode
+    wait_for_picker "no-parent picker"
+
+    send "main"
+    settle
+    send "\r"
+    expect_text "no inferred parent for main" "no-parent message"
+    expect_text "Press any key" "no-parent pause"
+    send "x"
+    wait_for_picker "picker after no-parent pause"
+    assert_equal "no-parent Enter must not check anything out" [current_branch $repo] main
+
+    send "\x03"
+    wait_for_exit "Ctrl-C after the no-parent pause" 130
+    puts "PASS: a branch with no parent shows a message and returns to the picker"
+}
+
+# Open select_git_branch with the cursor on $branch, press Enter, and return
+# the branch it printed. $arguments are extra select_git_branch arguments.
+proc enter_on_start_branch {select_git_branch repo arguments} {
+    global spawn_id
+    start $repo $select_git_branch {*}$arguments
+    wait_for_picker "select_git_branch $arguments"
+    send "\r"
+    set output ""
+    expect {
+        eof {}
+        timeout { fail "select_git_branch $arguments did not exit after Enter" }
+        -re {.+} {
+            append output $expect_out(buffer)
+            exp_continue
+        }
+    }
+    wait
+    # The selection is the last line printed, after fzf's screen cleanup.
+    regsub -all {\x1b\[[0-9;?$]*[a-zA-Z]} $output "" plain
+    set selected ""
+    foreach line [split $plain "\r\n"] {
+        if {[string trim $line] ne ""} {
+            set selected [string trim $line]
+        }
+    }
+    return $selected
+}
+
+# --start-branch has to translate a branch into fzf's row position, and the
+# list view (fzf --tac) numbers rows from the other end than the tree views.
+proc check_start_branch {select_git_branch repo} {
+    foreach {view flags} {list {} tree {-g} git-graph {-y}} {
+        foreach branch {feature-a hotfix} {
+            set selected [enter_on_start_branch $select_git_branch $repo [list --start-branch $branch {*}$flags]]
+            assert_equal "--start-branch $branch in the $view view" $selected $branch
+        }
+        puts "PASS: --start-branch puts the cursor on the branch in the $view view"
+    }
+
+    set selected [enter_on_start_branch $select_git_branch $repo {--start-branch no-such-branch -g}]
+    assert_equal "an unknown --start-branch keeps the default cursor" $selected main
+    puts "PASS: an unknown --start-branch is ignored"
+
+    # A starting query filters the list, so the row position would be wrong and
+    # the jump is skipped: Enter picks the first match, feature-a (the parent
+    # of the other two matches).
+    set selected [enter_on_start_branch $select_git_branch $repo {--start-branch hotfix -g feature}]
+    assert_equal "--start-branch with a starting query" $selected feature-a
+    puts "PASS: --start-branch is skipped when a starting query filters the list"
+}
+
+# ------------------------------------------------------------------------ main
+
+foreach script [list $gbscode $select_git_branch] {
+    if {![file executable $script]} {
+        fail "not executable: $script"
+    }
+}
+
+build_fixture $fixture_dir
+
+check_gbscode_flow $gbscode $fixture_dir
+check_no_parent $gbscode $fixture_dir
+check_start_branch $select_git_branch $fixture_dir
+
+cleanup
+puts "PASS: all gbscode TUI tests"
