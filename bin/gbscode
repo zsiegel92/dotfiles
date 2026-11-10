@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Browse branches with gbs -g; Enter opens that branch's gscode -c <parent>..<branch> view, and leaving gscode returns to the branch picker.
+# Usage: gbscode [gbs options] [query]
+#
+# Starts in the gbs -g tree picker with all of its keys (ctrl-enter switch+stay,
+# ctrl-g/f/h/y view switching, ctrl-w, ctrl-b, ctrl-x, ...). Other gbs view flags
+# override -g.
+#
+# Enter on a branch checks it out, as gbs does, so gscode's working-tree actions
+# (Enter, ctrl-p, content search) show that branch's files. It then opens
+# `gscode -c <parent>..<branch>`, where <parent> is the branch's inferred parent
+# (the same one gbs -g and `gparent` use). Ctrl-C or Esc in gscode returns to the
+# picker. Ctrl-C or Esc in the picker exits.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Ctrl-C must not kill this wrapper while gscode is running. A no-op handler (not
+# `trap ''`) keeps SIGINT at its default in child processes.
+trap : INT
+
+pause() {
+  printf '%s\n' "$1" >&2
+  read -r -s -n 1 -p "Press any key to return to the branch picker. " _ </dev/tty
+  printf '\n' >&2
+}
+
+while true; do
+  branch=$("$SCRIPT_DIR/select_git_branch" --switch-stay -g "$@") || exit
+  [ -n "$branch" ] || exit
+
+  echo "git checkout $branch"
+  if ! git checkout "$branch"; then
+    pause "gbscode: could not check out $branch"
+    continue
+  fi
+
+  parent=$("$SCRIPT_DIR/gparent" "$branch") || parent=
+  if [ -z "$parent" ]; then
+    pause "gbscode: no inferred parent for $branch, so there is no range to compare"
+    continue
+  fi
+
+  "$SCRIPT_DIR/gscode" -c "$parent..$branch"
+done
