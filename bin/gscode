@@ -59,6 +59,8 @@ Keys:
   Ctrl-S      toggle unified and side-by-side hunk previews
   Ctrl-W      toggle filename and file-content search; both filters remain active
   Ctrl-X      copy the selected file path
+  Alt-Up/Down       scroll the preview by line
+  Alt-Shift-Up/Down scroll the preview by page (also PgUp/PgDn)
   Esc         return to the unified preview from side-by-side mode; otherwise exit
 
 Hunk diff view (press Ctrl-H from either preview):
@@ -1041,7 +1043,7 @@ run_picker() {
         --preview-label "$preview_label"
         --preview-window "$preview_window"
         --bind "result:transform($fit_preview_cmd)"
-        --bind "alt-up:preview-up,alt-down:preview-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down"
+        --bind "alt-up:preview-up,alt-down:preview-down,alt-shift-up:preview-page-up,alt-shift-down:preview-page-down,alt-u:preview-page-up,alt-d:preview-page-down,page-up:preview-page-up,page-down:preview-page-down"
         --bind "$open_stay_bind"
         --bind "$diff_bind"
         --bind "$hunk_bind"
