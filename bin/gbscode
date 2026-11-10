@@ -6,11 +6,10 @@
 # ctrl-g/f/h/y view switching, ctrl-w, ctrl-b, ctrl-x, ...). Other gbs view flags
 # override -g.
 #
-# Enter on a branch checks it out, as gbs does, so gscode's working-tree actions
-# (Enter, ctrl-p, content search) show that branch's files. It then opens
-# `gscode -c <parent>..<branch>`, where <parent> is the branch's inferred parent
-# (the same one gbs -g and `gparent` use). Ctrl-C or Esc in gscode returns to the
-# picker. Ctrl-C or Esc in the picker exits.
+# Enter on a branch opens `gscode -c <parent>..<branch>`, where <parent> is the
+# branch's inferred parent (the same one gbs -g and `gparent` use). Nothing is
+# checked out; it is the same as running that gscode command by hand. Ctrl-C or
+# Esc in gscode returns to the picker. Ctrl-C or Esc in the picker exits.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Ctrl-C must not kill this wrapper while gscode is running. A no-op handler (not
@@ -27,15 +26,9 @@ while true; do
   branch=$("$SCRIPT_DIR/select_git_branch" --switch-stay -g "$@") || exit
   [ -n "$branch" ] || exit
 
-  echo "git checkout $branch"
-  if ! git checkout "$branch"; then
-    pause "gbscode: could not check out $branch"
-    continue
-  fi
-
   parent=$("$SCRIPT_DIR/gparent" "$branch") || parent=
   if [ -z "$parent" ]; then
-    pause "gbscode: no inferred parent for $branch, so there is no range to compare"
+    pause "gbscode: no inferred parent for $branch, so there is no range to show"
     continue
   fi
 
