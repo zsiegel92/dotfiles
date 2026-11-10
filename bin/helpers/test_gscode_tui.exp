@@ -81,6 +81,65 @@ proc check_compare_option_validation {gscode} {
     puts "PASS: -c/--compare validation and exclusivity"
 }
 
+# Drain redraws until the screen goes quiet, then return the last preview
+# position fzf drew (the N in its "N/605" indicator for the fixture diff).
+proc preview_position {} {
+    set screen ""
+    expect {
+        -timeout 1 -re {.+} { append screen $expect_out(0,string); exp_continue }
+        timeout {}
+    }
+    set last ""
+    foreach {_ n} [regexp -all -inline {([0-9]+)/605} $screen] { set last $n }
+    return $last
+}
+
+# Drive the real picker over a long diff and read fzf's preview position
+# indicator (N/total) after each key. Alt-Up/Down must scroll one line;
+# Alt-Shift-Up/Down must scroll a page, the same distance as PgUp/PgDn.
+proc check_preview_scroll_keys {gscode} {
+    set repo [exec mktemp -d -t gscode-scroll-test]
+    set git [list git -C $repo -c user.name=gscode-test -c user.email=gscode-test@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null]
+    exec {*}$git init -q
+    exec sh -c {seq 1 300 | sed 's/^/line /' > "$0/big.txt"} $repo
+    exec {*}$git add big.txt
+    exec {*}$git commit -q -m add
+    exec sh -c {seq 1 300 | sed 's/^/changed /' > "$0/big.txt"} $repo
+
+    log_user 0
+    spawn -noecho sh -c {cd "$0" && exec "$1"} $repo $gscode
+    set slave $spawn_out(slave,name)
+    if {[catch {exec stty -f $slave rows 40 columns 160} error]} {
+        catch {close}
+        catch {wait}
+        file delete -force $repo
+        fail "scroll keys: could not size the terminal: $error"
+    }
+
+    set initial [preview_position]
+    send "\x1b\[1;3B"; set line_down [preview_position]
+    send "\x1b\[1;3A"; set line_up [preview_position]
+    send "\x1b\[1;4B"; set page_down [preview_position]
+    send "\x1b\[1;4A"; set page_up [preview_position]
+    send "\x1b\[6~";   set pgdn [preview_position]
+
+    send "\003"
+    catch {expect eof}
+    catch {wait}
+    file delete -force $repo
+
+    assert_equal "initial preview position" $initial 1
+    assert_equal "Alt-Down scrolls one line" $line_down 2
+    assert_equal "Alt-Up scrolls one line back" $line_up 1
+    if {$page_down eq "" || $page_down <= 2} {
+        fail "Alt-Shift-Down should scroll by a page, but the preview position went from 1 to '$page_down'"
+    }
+    assert_equal "Alt-Shift-Up scrolls one page back" $page_up 1
+    assert_equal "Alt-Shift-Down pages like PgDn" $page_down $pgdn
+
+    puts "PASS: Alt-Up/Down scroll by line and Alt-Shift-Up/Down scroll by page"
+}
+
 proc resize_smoke {gscode mode arguments} {
     log_user 0
     spawn -noecho $gscode {*}$arguments
@@ -143,6 +202,7 @@ check_layout_actions $gscode
 check_current_file_preview_actions $gscode
 check_query_toggle_action $gscode
 check_compare_option_validation $gscode
+check_preview_scroll_keys $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
 resize_smoke $gscode "compare mode" [list -c HEAD~1..HEAD]
