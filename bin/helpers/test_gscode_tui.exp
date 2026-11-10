@@ -81,17 +81,24 @@ proc check_compare_option_validation {gscode} {
     puts "PASS: -c/--compare validation and exclusivity"
 }
 
-# Drain redraws until the screen goes quiet, then return the last preview
-# position fzf drew (the N in its "N/605" indicator for the fixture diff).
-proc preview_position {} {
+# Return the preview position fzf last drew (the N in its "N/605" indicator for
+# the fixture diff). Drain redraws until the screen goes quiet; `last` seeds the
+# answer for callers that already consumed an indicator.
+proc preview_position {id {last ""}} {
     set screen ""
-    expect {
-        -timeout 1 -re {.+} { append screen $expect_out(0,string); exp_continue }
-        timeout {}
-    }
-    set last ""
+    expect -i $id -timeout 2 -re {.+} { append screen $expect_out(0,string); exp_continue } timeout {}
     foreach {_ n} [regexp -all -inline {([0-9]+)/605} $screen] { set last $n }
     return $last
+}
+
+# Block until the picker has drawn the preview indicator for the first time
+# (gscode needs a moment to start), then return that position.
+proc initial_preview_position {id} {
+    set first ""
+    expect -i $id -timeout 15 -re {([0-9]+)/605} {
+        set first $expect_out(1,string)
+    }
+    return [preview_position $id $first]
 }
 
 # Drive the real picker over a long diff and read fzf's preview position
@@ -108,6 +115,7 @@ proc check_preview_scroll_keys {gscode} {
 
     log_user 0
     spawn -noecho sh -c {cd "$0" && exec "$1"} $repo $gscode
+    set id $spawn_id
     set slave $spawn_out(slave,name)
     if {[catch {exec stty -f $slave rows 40 columns 160} error]} {
         catch {close}
@@ -116,12 +124,12 @@ proc check_preview_scroll_keys {gscode} {
         fail "scroll keys: could not size the terminal: $error"
     }
 
-    set initial [preview_position]
-    send "\x1b\[1;3B"; set line_down [preview_position]
-    send "\x1b\[1;3A"; set line_up [preview_position]
-    send "\x1b\[1;4B"; set page_down [preview_position]
-    send "\x1b\[1;4A"; set page_up [preview_position]
-    send "\x1b\[6~";   set pgdn [preview_position]
+    set initial [initial_preview_position $id]
+    send "\x1b\[1;3B"; set line_down [preview_position $id]
+    send "\x1b\[1;3A"; set line_up [preview_position $id]
+    send "\x1b\[1;4B"; set page_down [preview_position $id]
+    send "\x1b\[1;4A"; set page_up [preview_position $id]
+    send "\x1b\[6~";   set pgdn [preview_position $id]
 
     send "\003"
     catch {expect eof}
