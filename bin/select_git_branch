@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fuzzy-select a git branch; prints the chosen branch name (no leading markers).
-# Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [query]
+# Usage: select_git_branch [-g|--graph|--tree|-f|--full-dag|-h|--handmade-dag|-y|--git-graph] [-a|--all-ancestry] [--start-branch <branch>] [query]
+# --start-branch puts the cursor on <branch>'s row when the picker first opens. It is
+# ignored when a starting query filters the list, since the row's position would be off.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "$0")"
 FZF_WRAP_HEADER="$SCRIPT_DIR/helpers/fzf_wrap_header"
@@ -30,12 +32,21 @@ fi
 initial_view_mode=list
 initial_preview_scope=main
 enable_switch_stay=0
+start_branch=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --switch-stay)
       enable_switch_stay=1
       shift
+      ;;
+    --start-branch)
+      if [ "$#" -lt 2 ]; then
+        echo "select_git_branch: --start-branch requires a branch" >&2
+        exit 2
+      fi
+      start_branch="$2"
+      shift 2
       ;;
     -g|--graph|--tree)
       initial_view_mode=tree
@@ -99,6 +110,29 @@ select_git_branch_git_graph_rows() {
   uv run --script "$SELECT_GIT_BRANCH_TREE_ROWS" --git-graph
 }
 
+select_git_branch_tree_like_view() {
+  [ "$1" = tree ] || [ "$1" = full-dag ] || [ "$1" = handmade-dag ] || [ "$1" = git-graph ]
+}
+
+# Print the 1-based position fzf gives a branch's row in the result list, or
+# nothing if no row is that branch. The list view runs fzf with --tac, which
+# numbers the rows from the end of the input; the other views keep input order.
+select_git_branch_row_position() {
+  local rows="$1"
+  local branch="$2"
+  local view_mode="$3"
+  local reversed=1
+
+  if select_git_branch_tree_like_view "$view_mode"; then
+    reversed=0
+  fi
+
+  printf '%s\n' "$rows" | awk -F '\t' -v branch="$branch" -v reversed="$reversed" '
+    $1 == branch && !found { found = NR }
+    END { if (found) print reversed ? NR - found + 1 : found }
+  '
+}
+
 select_git_branch_fzf() {
   local rows="$1"
   local header="$2"
@@ -106,7 +140,9 @@ select_git_branch_fzf() {
   local current_query="$4"
   local preview_scope="$5"
   local switch_stay_bind="$6"
+  local start_branch="$7"
   local preview_command
+  local start_position
 
   header=$("$FZF_WRAP_HEADER" "$header") || return
 
@@ -146,7 +182,16 @@ select_git_branch_fzf() {
     fzf_args+=(--bind="$switch_stay_bind")
   fi
 
-  if [ "$view_mode" = tree ] || [ "$view_mode" = full-dag ] || [ "$view_mode" = handmade-dag ] || [ "$view_mode" = git-graph ]; then
+  # Jump once the list has loaded, then unbind so later reloads (switch+stay)
+  # keep the cursor where it is.
+  if [ -n "$start_branch" ] && [ -z "$current_query" ]; then
+    start_position=$(select_git_branch_row_position "$rows" "$start_branch" "$view_mode")
+    if [ -n "$start_position" ]; then
+      fzf_args+=(--bind="load:pos($start_position)+unbind(load)")
+    fi
+  fi
+
+  if select_git_branch_tree_like_view "$view_mode"; then
     fzf_args+=(--layout=reverse)
   else
     fzf_args+=(--tac)
@@ -248,8 +293,10 @@ while true; do
     header="enter: select branch, ${switch_stay_header}ctrl-w: open MR in GitLab, ctrl-b: copy branch, ctrl-x: copy parent..branch, ctrl-g: tree view, ctrl-f: full DAG view, ctrl-h: handmade DAG view, ctrl-y: git graph view, alt-up/down: scroll preview"
   fi
 
-  selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope" "$switch_stay_bind")
+  selected=$(select_git_branch_fzf "$active_rows" "$header" "$view_mode" "$current_query" "$preview_scope" "$switch_stay_bind" "$start_branch")
   fzf_status=$?
+  # Only the first picker opens on --start-branch; later ones (view switches) start fresh.
+  start_branch=
 
   if [ "$fzf_status" -ne 0 ]; then
     exit "$fzf_status"

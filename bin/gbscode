@@ -6,10 +6,12 @@
 # ctrl-g/f/h/y view switching, ctrl-w, ctrl-b, ctrl-x, ...). Other gbs view flags
 # override -g.
 #
-# Enter on a branch opens `gscode -c <parent>..<branch>`, where <parent> is the
-# branch's inferred parent (the same one gbs -g and `gparent` use). Nothing is
-# checked out; it is the same as running that gscode command by hand. Ctrl-C or
-# Esc in gscode returns to the picker. Ctrl-C or Esc in the picker exits.
+# Enter on a branch opens `gscode -s -c <parent>..<branch>`, where <parent> is the
+# branch's inferred parent (the same one gbs -g and `gparent` use). It starts in
+# gscode's side-by-side preview; ctrl-s still toggles to the unified diff. Nothing
+# is checked out; it is the same as running that gscode command by hand. Ctrl-C or
+# Esc in gscode returns to the picker with the cursor still on that branch.
+# Ctrl-C or Esc in the picker exits.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Ctrl-C must not kill this wrapper while gscode is running. A no-op handler (not
@@ -22,9 +24,12 @@ pause() {
   printf '\n' >&2
 }
 
+start_args=()
 while true; do
-  branch=$("$SCRIPT_DIR/select_git_branch" --switch-stay -g "$@") || exit
+  branch=$("$SCRIPT_DIR/select_git_branch" --switch-stay -g "${start_args[@]}" "$@") || exit
   [ -n "$branch" ] || exit
+  # Reopen the picker with the cursor on this branch when we come back.
+  start_args=(--start-branch "$branch")
 
   parent=$("$SCRIPT_DIR/gparent" "$branch") || parent=
   if [ -z "$parent" ]; then
@@ -32,5 +37,5 @@ while true; do
     continue
   fi
 
-  "$SCRIPT_DIR/gscode" -c "$parent..$branch"
+  "$SCRIPT_DIR/gscode" -s -c "$parent..$branch"
 done
