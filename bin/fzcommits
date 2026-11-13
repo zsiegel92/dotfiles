@@ -2,16 +2,29 @@
 # Browse the commits that touched a file; preview each version of the file.
 #   fzcommits <file>             show selected version (file restored to HEAD on exit)
 #   fzcommits <file> --checkout  restore the file to the selected commit's version
+#   -s, --side-by-side           start with a side-by-side diff preview (needs delta)
+# Ctrl-S toggles the preview between unified and side-by-side diffs.
 # In all cases, Ctrl-C restores the file to HEAD.
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
-FILE="$1"
+usage() { echo "Usage: fzcommits <file> [--checkout] [-s|--side-by-side]"; }
+FILE=""
+USE_CHECKOUT="0"
+SIDE_BY_SIDE="0"
+for arg in "$@"; do
+  case "$arg" in
+    --checkout) USE_CHECKOUT="1" ;;
+    -s|--side-by-side) SIDE_BY_SIDE="1" ;;
+    -h|--help) usage; exit 0 ;;
+    *) if [[ -z "$FILE" ]]; then FILE="$arg"; else usage; exit 1; fi ;;
+  esac
+done
 if [[ -z "$FILE" ]]; then
-  echo "Usage: fzcommits <file> [--checkout]"
+  usage
   exit 1
 fi
-USE_CHECKOUT="0"
-if [[ "$2" == "--checkout" ]]; then
-  USE_CHECKOUT="1"
+if [[ "$SIDE_BY_SIDE" == "1" ]] && ! command -v delta >/dev/null 2>&1; then
+  echo "fzcommits: side-by-side mode requires delta (https://github.com/dandavison/delta)." >&2
+  exit 1
 fi
 
 # Check if the file has been modified since the last commit
@@ -23,9 +36,23 @@ fi
 
 # Save the current HEAD commit hash
 headCommit=$(git rev-parse HEAD)
+restore_cmd="git restore --source={1} --worktree -- \"$FILE\""
+unified_preview="($restore_cmd) && (git diff {1}^ -- \"$FILE\" | pygmentize -l diff)"
+side_preview="($restore_cmd) && (git diff --color=always {1}^ -- \"$FILE\" | delta --side-by-side --line-numbers --width \$FZF_PREVIEW_COLUMNS --paging=never)"
+if [[ "$SIDE_BY_SIDE" == "1" ]]; then
+  initial_preview="$side_preview"; initial_label="side-by-side"
+else
+  initial_preview="$unified_preview"; initial_label="unified"
+fi
+# fzf exports the current preview label to transform actions, so use it as the toggle state.
+export FZC_UNIFIED_PREVIEW="$unified_preview" FZC_SIDE_PREVIEW="$side_preview"
+toggle='if [ "$FZF_PREVIEW_LABEL" = " side-by-side " ]; then printf "change-preview-label[ unified ]+change-preview[%s]" "$FZC_UNIFIED_PREVIEW"; else printf "change-preview-label[ side-by-side ]+change-preview[%s]" "$FZC_SIDE_PREVIEW"; fi'
 commitHash=$("$HELPERS/listCommitsThatAffectFile" "$FILE" | \
   fzf --wrap --no-mouse \
-      --preview "(git restore --source={1} --worktree -- \"$FILE\") && (git diff {1}^ -- \"$FILE\" | pygmentize -l diff)" \
+      --preview "$initial_preview" \
+      --preview-label " $initial_label " \
+      --header "ctrl-s: toggle side-by-side" \
+      --bind "ctrl-s:transform:$toggle" \
       --bind alt-up:preview-up,alt-down:preview-down  | cut -d' ' -f1)
 
 if [[ -n "$commitHash" ]]; then
