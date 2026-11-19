@@ -225,6 +225,98 @@ proc check_open_keys {gscode} {
     file delete -force $repo
 }
 
+proc expect_picker_text {id text} {
+    expect -i $id {
+        -ex $text {}
+        timeout { fail "picker did not show: $text" }
+        eof { fail "picker exited before showing: $text" }
+    }
+}
+
+proc check_change_type_modes {gscode} {
+    set repo [exec mktemp -d -t gscode-types-test]
+    set git [list git -C $repo -c user.name=gscode-test -c user.email=gscode-test@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null]
+    exec {*}$git init -q
+    foreach name {modified deleted} {
+        set handle [open [file join $repo "$name.txt"] w]
+        puts $handle original
+        close $handle
+    }
+    exec {*}$git add .
+    exec {*}$git commit -q -m initial
+    file delete [file join $repo deleted.txt]
+    foreach name {modified added} {
+        set handle [open [file join $repo "$name.txt"] w]
+        puts $handle needle
+        close $handle
+    }
+
+    # Check exact records, including untracked additions and files absent from
+    # the working tree, in default, branch, and explicit comparison modes.
+    set previous [pwd]
+    cd $repo
+    foreach arguments {{} {--branch HEAD~1} {--branch HEAD~1..HEAD}} {
+        if {$arguments eq {--branch HEAD~1}} {
+            exec {*}$git add -A
+            exec {*}$git commit -q -m changes
+        }
+        foreach {mode expected} {all {added.txt deleted.txt modified.txt} A added.txt D deleted.txt M modified.txt} {
+            set records [exec $gscode --filter-files {*}$arguments --change-type $mode {} {}]
+            set paths {}
+            foreach record [split $records "\n"] { lappend paths [lindex [split $record "\x1f"] 1] }
+            assert_equal "$arguments $mode paths" [lsort $paths] $expected
+        }
+        set combined [exec $gscode --filter-files {*}$arguments --change-type M modified needle]
+        assert_contains "change type combines with both search filters" $combined modified.txt
+    }
+    cd $previous
+
+    log_user 0
+    spawn -noecho sh -c {cd "$0" && exec "$1" -s -c HEAD~1..HEAD} $repo $gscode
+    set slave $spawn_out(slave,name)
+    exec stty -f $slave rows 40 columns 160
+    expect {
+        -re {files>} {}
+        timeout { fail "change-type picker did not start" }
+    }
+    foreach prompt {{(a) files>} {(d) files>} {(m) files>} {files>}} {
+        send "\024"
+        expect {
+            -ex $prompt {}
+            timeout { fail "Ctrl-T did not cycle to $prompt" }
+            eof { fail "Ctrl-T unexpectedly exited the picker" }
+        }
+    }
+    # Empty filtered lists must still allow cycling. Keep both the filename
+    # and content searches across restarts in side-by-side mode.
+    send "modified"
+    after 200
+    send "\024"
+    expect_picker_text $spawn_id {(a) files>}
+    expect_picker_text $spawn_id modified
+    send "\027"
+    expect_picker_text $spawn_id {(a) contents>}
+    send "needle"
+    after 200
+    foreach prompt {{(d) contents>} {(m) contents>}} {
+        send "\024"
+        expect {
+            -ex $prompt {}
+            timeout { fail "Ctrl-T did not cycle an empty list to $prompt" }
+            eof { fail "Ctrl-T exited on an empty list" }
+        }
+        expect_picker_text $spawn_id needle
+    }
+    send "\027"
+    expect_picker_text $spawn_id {(m) files>}
+    expect_picker_text $spawn_id modified
+    send "\003"
+    catch {expect eof}
+    catch {wait}
+    file delete -force $repo
+    puts "PASS: Ctrl-T cycles file types, decorates prompts, and preserves search filters"
+}
+
 proc resize_smoke {gscode mode arguments} {
     log_user 0
     spawn -noecho $gscode {*}$arguments
@@ -289,6 +381,7 @@ check_query_toggle_action $gscode
 check_compare_option_validation $gscode
 check_preview_scroll_keys $gscode
 check_open_keys $gscode
+check_change_type_modes $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
 resize_smoke $gscode "compare mode" [list -c HEAD~1..HEAD]
