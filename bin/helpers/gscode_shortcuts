@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+# The TSV owns shortcut descriptions and visibility. Keep bindings in gscode.
+# Fields: section, keys, show-in-legend, short description, full description, CLI flags.
+# Render only on picker setup or when help is requested, never for previews.
+awk -F '\t' -v view="${1:---full}" -v open_stay="${2:-Ctrl-Enter / Alt-Enter}" \
+    -v diff_sides="${3:-mode-dependent}" -v search_target="${4:-contents}" '
+function replace_literal(text, token, value,   result, pos) {
+    result = ""
+    while ((pos = index(text, token))) {
+        result = result substr(text, 1, pos - 1) value
+        text = substr(text, pos + length(token))
+    }
+    return result text
+}
+function expand(text) {
+    text = replace_literal(text, "@open_stay@", open_stay)
+    text = replace_literal(text, "@diff_sides@", diff_sides)
+    return replace_literal(text, "@search_target@", search_target)
+}
+/^#/ || NF < 6 { next }
+view == "--legend" {
+    if ($3 != "1") next
+    printf "%s%s: %s", separator, tolower(expand($2)), expand($4)
+    separator = " · "
+    next
+}
+{
+    if ($1 != section) {
+        printf "\n%s\n", $1
+        section = $1
+    }
+    printf "  %-32s %s\n", expand($2), expand($5)
+    if ($6 != "-") printf "    CLI: %s\n", $6
+}
+END { if (view == "--legend") printf "\n" }
+' "$(dirname "$0")/gscode_shortcuts.tsv"

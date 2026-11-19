@@ -148,6 +148,39 @@ proc check_preview_scroll_keys {gscode} {
     puts "PASS: Alt-Up/Down scroll by line and Alt-Shift-Up/Down scroll by page"
 }
 
+proc check_shortcut_rendering {helper_dir gscode} {
+    set renderer [file join $helper_dir gscode_shortcuts]
+    set legend [exec $renderer --legend alt-enter {HEAD vs working} filenames]
+    set full [exec $renderer --full alt-enter {HEAD vs working}]
+    assert_contains "legend advertises help" $legend {ctrl-l: all shortcuts}
+    assert_contains "legend uses the active fallback key" $legend {alt-enter: open+stay}
+    assert_contains "legend uses the active search target" $legend {ctrl-w: search filenames}
+    if {[string first {Alt-Up / Alt-Down} $legend] >= 0} { fail "full-help-only shortcut leaked into legend" }
+    assert_contains "full help includes hidden shortcuts" $full {Alt-Up / Alt-Down}
+    assert_contains "full help includes side-by-side CLI flag" $full {-s/--side-by-side}
+    assert_contains "full help includes graph-parent CLI flag" $full {-g; --graph; --tree}
+    assert_contains "full help includes compare CLI flag" $full {--compare=RANGE}
+    assert_contains "--help uses the same shortcut source" [exec $gscode --help] [exec $renderer --full]
+    puts "PASS: shared shortcut source renders legend, full help, and CLI modes"
+}
+
+# Exercise the real nested help screen and both ways back. Ctrl-L must remain
+# available even when filtering help leaves no matches.
+proc help_round_trip {id close_key} {
+    send -i $id "\014"
+    expect_picker_text $id {gscode shortcuts and CLI modes}
+    expect_picker_text $id {help>}
+    send -i $id "no-such-shortcut-xyz"
+    after 100
+    send -i $id $close_key
+    set screen [expect_picker_text $id {ctrl-l:}]
+    expect -i $id -timeout 1 -re {.+} {
+        append screen $expect_out(0,string)
+        exp_continue
+    } timeout {}
+    return $screen
+}
+
 # Stub only VS Code so Enter can be checked without launching the editor.
 # The pager itself runs with real delta/less inside the pseudo-terminal.
 proc check_open_keys {gscode} {
@@ -195,6 +228,8 @@ proc check_open_keys {gscode} {
             }
         }
 
+        help_round_trip $spawn_id "\033"
+        help_round_trip $spawn_id "\014"
         send "\017"
         expect {
             -re {q back} {}
@@ -203,7 +238,7 @@ proc check_open_keys {gscode} {
         if {[file exists $open_log]} { fail "Ctrl-O unexpectedly opened VS Code" }
         send "q"
         expect {
-            -re {ctrl-o: hunk pager} {}
+            -re {ctrl-o:} {}
             timeout { fail "$mode picker did not return after closing the pager" }
         }
         after 200
@@ -231,6 +266,7 @@ proc expect_picker_text {id text} {
     } eof {
         fail "picker exited before showing: $text"
     }
+    return $expect_out(buffer)
 }
 
 proc check_change_type_modes {gscode} {
@@ -307,6 +343,11 @@ proc check_change_type_modes {gscode} {
         }
         expect_picker_text $spawn_id needle
     }
+    foreach close_key [list "\033" "\014"] {
+        set restored [help_round_trip $spawn_id $close_key]
+        assert_contains "help preserves the content prompt and change-type filter" $restored {(m) contents>}
+        assert_contains "help preserves the content query" $restored needle
+    }
     send "\027"
     expect_picker_text $spawn_id {(m) files>}
     expect_picker_text $spawn_id modified
@@ -371,10 +412,13 @@ close $source_handle
 if {[string first {resize:} $source] >= 0} {
     fail "gscode must not bind external work to fzf's resize event"
 }
-if {[string first {--no-sort} $source] >= 0} {
+# Help keeps its section order; the file picker must still rank matches.
+set picker_source [string range $source [string first {run_picker() } $source] end]
+if {[string first {--no-sort} $picker_source] >= 0} {
     fail "gscode must let fzf rank filename matches by relevance"
 }
 
+check_shortcut_rendering $helper_dir $gscode
 check_layout_actions $gscode
 check_current_file_preview_actions $gscode
 check_query_toggle_action $gscode

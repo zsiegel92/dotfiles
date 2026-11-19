@@ -1,0 +1,29 @@
+# Section	Keys	Legend (1=yes, 0=full help only)	Short description	Full description	Related CLI flags
+Files and views	Enter	1	code	Open the selected working-tree file in VS Code.	-
+Files and views	@open_stay@	1	open+stay	Open in VS Code without leaving the picker. Uses Ctrl-Enter when fzf supports it, otherwise Alt-Enter.	-
+Files and views	Ctrl-D	1	code --diff (@diff_sides@)	Open the selected file in VS Code's diff editor. Default: HEAD vs working tree; branch/graph: selected ref vs working tree; compare: the two committed sides.	-b/--branch REF; -g/--graph/--tree; -c/--compare A..B or A...B
+Files and views	Ctrl-P	1	current file	Toggle the preview between the unified diff and current working-tree contents, with content-search matches highlighted.	-
+Files and views	Ctrl-S	1	toggle side-by-side	Toggle unified and side-by-side hunk previews. Esc also returns from side-by-side to unified.	-s/--side-by-side starts with the side-by-side preview
+Files and views	Ctrl-O	1	hunk pager	Open the selected file in the interactive side-by-side terminal pager. Press q to return.	-
+Files and views	Ctrl-H	1	Hunk changeset (Ctrl-C returns)	Open the current changeset in Hunk with its sidebar open. Press Ctrl-C to return.	-
+Search and filters	Ctrl-T	1	all → a → d → m	Cycle file-status filters: all changes, additions (including untracked files), deletions, modifications, then all. The prompt shows the active filter.	-
+Search and filters	Ctrl-W	1	search @search_target@	Switch between filename and file-content search. Both queries and the change-type filter remain active together.	An optional positional query starts the filename search
+Search and filters	Type / Backspace	0	edit query	Edit the active search query. Content search checks working-tree files, so deleted files cannot match a nonempty content query.	-
+Navigation	Up / Down	0	select file	Move through matching files (or entries in this help screen).	-
+Navigation	Alt-Up / Alt-Down	0	scroll preview	Scroll the preview by one line.	-
+Navigation	Alt-Shift-Up / Alt-Shift-Down	0	page preview	Scroll the preview by one page.	-
+Navigation	PgUp / PgDn; Alt-U / Alt-D	0	page preview	Alternate shortcuts to scroll the preview by one page.	-
+Navigation	Ctrl-J / Ctrl-K	1	selector −/+	Decrease / increase the space allocated to the file selector.	-
+Navigation	Ctrl-X	1	copy path	Copy the selected file path to the clipboard.	-
+Help and exit	Ctrl-L	1	all shortcuts	Open this searchable shortcut and CLI-mode guide. Ctrl-L or Esc closes it and restores the picker, including selection, queries, filters, and preview.	-h/--help prints this guide in the shell
+Help and exit	Esc	0	back / exit	In help: return to the picker. In a side-by-side preview: return to unified. Otherwise: exit gscode.	-
+Help and exit	Ctrl-C	0	exit	Exit the picker directly. In help or Hunk: close that view and return to the picker.	-
+Side-by-side pager	Up / Down; j / k	0	scroll	Scroll the terminal pager by one line.	-
+Side-by-side pager	Space / b	0	page	Page forward / backward.	-
+Side-by-side pager	n / N	0	next / previous hunk	Jump to the next / previous diff hunk.	-
+Side-by-side pager	g / G	0	beginning / end	Jump to the beginning / end of the diff.	-
+Side-by-side pager	q	0	back	Close the pager and return to the picker. Esc then follows the picker's normal back / exit behavior.	-
+CLI modes	Working-tree changes	0	default	List dirty tracked files and untracked files. This is the default mode.	No mode flag
+CLI modes	Branch/ref diff	0	branch	List committed changes in REF..HEAD. Opening a file and content search still use the working tree.	-b REF; --branch REF; --branch=REF
+CLI modes	Graph-parent diff	0	graph parent	List committed changes from the current branch's nearest parent branch to HEAD, using the same parent logic as gbs -g.	-g; --graph; --tree
+CLI modes	Explicit comparison	0	compare	List committed changes in A..B, or merge-base(A,B)..B for A...B. An omitted side means HEAD. Ctrl-D compares committed versions.	-c RANGE; --compare RANGE; --compare=RANGE

@@ -2,17 +2,7 @@
 # Repeatedly fuzzy-select changed files and open each in VS Code.
 # Usage: gscode [-s|--side-by-side] [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree | -c <A..B|A...B> | --compare <A..B|A...B>] [query]
 #
-# Keys in the picker:
-#   Enter    open the selected file in VS Code
-#   Ctrl-O   open the selected file in the interactive side-by-side hunk pager
-#   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
-#   Ctrl-H   open the current changeset with `hunk diff`
-#   Ctrl-D   open the selected file in `code --diff`
-#   Ctrl-P   toggle the preview between the diff and the file's current contents
-#   Ctrl-S   toggle the preview between unified and side-by-side hunk views
-#   Ctrl-T   cycle all changes, additions, deletions, and modifications
-#   Ctrl-W   toggle filename and file-content search
-#   Ctrl-X   copy the selected file path
+# Shortcut descriptions and legend visibility: helpers/gscode_shortcuts.tsv
 
 HELPERS="$(cd "$(dirname "$0")" && pwd)/helpers"
 GPARENT="$(cd "$(dirname "$0")" && pwd)/gparent"
@@ -43,48 +33,11 @@ Examples:
   gscode -s
   gscode -s -b main blah
 
-Default mode lists dirty tracked and untracked files.
-Branch/ref mode lists files changed in <branch-or-ref>..HEAD.
-Graph-parent mode (-g/--graph/--tree) lists files changed in <current branch's parent branch>..HEAD, using the same nearest-parent logic as gbs -g.
-Compare mode (-c/--compare) lists files changed in an explicit range, with git's own meaning: A..B compares A to B, and A...B compares merge-base(A, B) to B. An omitted side means HEAD.
 -b, -g and -c are mutually exclusive.
-Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side preview. Ctrl-S and Esc still return to the unified preview.
 Picker rows use `(status) path (+added -deleted)`. Untracked files appear as `A`; binary line counts appear as `?`.
-Ctrl-T filters by file status, including untracked files as additions. The prompt shows (a), (d), or (m) when filtered. Change-type, filename, and content filters remain active together.
-
-Keys:
-  Enter       open the selected file in VS Code
-  Ctrl-O      open the selected file in the interactive side-by-side hunk pager
-  Open+stay   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter
-  Ctrl-J/K    decrease/increase the space allocated to the file selector
-  Ctrl-H      open the current changeset with hunk diff
-  Ctrl-D      open the selected file in code --diff
-  Ctrl-P      toggle the preview between the diff and the file's current contents (rendered with bat)
-  Ctrl-S      toggle unified and side-by-side hunk previews
-  Ctrl-T      cycle change types: all → additions → deletions → modifications → all
-  Ctrl-W      toggle filename and file-content search; both filters remain active
-  Ctrl-X      copy the selected file path
-  Alt-Up/Down       scroll the preview by line
-  Alt-Shift-Up/Down scroll the preview by page (also PgUp/PgDn)
-  Esc         return to the unified preview from side-by-side mode; otherwise exit
-
-Hunk diff view (press Ctrl-H from either preview):
-  The sidebar starts open so every changed file is available
-  Use Hunk's own review controls
-  Ctrl-C        close Hunk and return to the gscode picker
-
-Interactive side-by-side pager (press Ctrl-O from either preview):
-  Up/Down, j/k scroll one line
-  Space/b      page forward/backward
-  n/N          jump to the next/previous hunk
-  g/G          jump to the beginning/end
-  q            close the view and return to the fzf picker
-
-Closing either nested view restores the gscode picker. To quit gscode entirely, return to the picker and press Esc.
-
-In default mode, Ctrl-D compares HEAD vs the working tree. In branch/ref mode, Ctrl-D compares the selected ref's version vs the working tree, matching gdpb. In compare mode, Ctrl-D compares the two sides of the range as committed, so the working tree is not involved.
-Enter, Ctrl-P and content search always use the file in the working tree, even in branch/ref and compare modes.
 EOF
+    "$HELPERS/gscode_shortcuts" --full
+
 }
 
 # Everything below that takes a base_ref accepts one of two shapes: a plain ref
@@ -632,6 +585,16 @@ open_diff_file() {
     fi
 }
 
+# Internal: a nested searchable help screen. Closing it resumes the same picker.
+if [ "$1" = "--show-help" ]; then
+    "$HELPERS/gscode_shortcuts" --full "$2" "$3" | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= fzf \
+        --layout=reverse --border --wrap --no-mouse --no-sort \
+        --prompt='help> ' --border-label='gscode shortcuts and CLI modes' \
+        --header='Esc / Ctrl-L: back · Type to search · Up/Down, PgUp/PgDn: scroll' \
+        --bind='ctrl-l:abort,esc:abort,enter:ignore' >/dev/null
+    exit 0
+fi
+
 # Internal: invoked by the fzf ctrl-x binding.
 if [ "$1" = "--copy-file" ]; then
     shift
@@ -894,12 +857,11 @@ if [ -n "$base_ref" ]; then
         diff_sides_label="$base_ref vs working"
     fi
     quoted_base_ref=${(q)base_ref}
-    header_base="enter: code · ctrl-o: hunk pager · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($diff_sides_label) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-t: all → a → d → m · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
     hunk_pager_cmd="$quoted_self --page-side-by-side --branch $quoted_base_ref {2}"
 else
-    header_base="enter: code · ctrl-o: hunk pager · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-t: all → a → d → m · ctrl-j/k: selector −/+"
+    diff_sides_label="HEAD vs working"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
     hunk_pager_cmd="$quoted_self --page-side-by-side {2}"
@@ -957,22 +919,23 @@ parse_picker_output() {
 
 run_picker() {
     local picker_header rendered_header active_query prompt picker_output picker_status parse_status
-    local quoted_header quoted_content_query preview_query_arg preview_action_query_args preview_toggle_cmd current_file_toggle_cmd preview_escape_cmd fit_preview_cmd adjust_selector_cmd query_mode_toggle_cmd change_type_toggle_cmd
+    local quoted_header quoted_content_query preview_query_arg preview_action_query_args preview_toggle_cmd current_file_toggle_cmd preview_escape_cmd fit_preview_cmd adjust_selector_cmd query_mode_toggle_cmd change_type_toggle_cmd help_cmd search_target
     local unified_preview_cmd side_by_side_preview_cmd current_file_preview_cmd preview_cmd preview_label preview_window header_layout content_filter_cmd quoted_filename_query
     local -a picker_args
 
     if [ "$query_mode" = "content" ]; then
-        picker_header="$header_base · ctrl-w: search filenames"
+        search_target=filenames
         active_query="$content_query"
         prompt='contents> '
     else
-        picker_header="$header_base · ctrl-w: search contents"
+        search_target=contents
         active_query="$filename_query"
         prompt='files> '
     fi
     if [ "$change_type" != all ]; then
         prompt="(${(L)change_type}) $prompt"
     fi
+    picker_header=$("$HELPERS/gscode_shortcuts" --legend "$open_stay_key_label" "$diff_sides_label" "$search_target")
     quoted_header=${(q)picker_header}
     if [ "$query_mode" = "content" ]; then
         preview_query_arg='{q}'
@@ -1001,6 +964,7 @@ run_picker() {
     adjust_selector_cmd="$quoted_self --adjust-selector"
     query_mode_toggle_cmd="$quoted_self --toggle-query-mode ${(q)query_toggle_marker}"
     change_type_toggle_cmd="$quoted_self --toggle-query-mode ${(q)change_type_toggle_marker}"
+    help_cmd="$quoted_self --show-help ${(q)open_stay_key_label} ${(q)diff_sides_label}"
 
     case "$picker_preview_label" in
         "side-by-side hunks")
@@ -1049,6 +1013,7 @@ run_picker() {
         --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)"
         --bind "ctrl-w:transform($query_mode_toggle_cmd)"
         --bind "ctrl-t:transform($change_type_toggle_cmd)"
+        --bind "ctrl-l:execute($help_cmd)"
         --bind "esc:transform($preview_escape_cmd)"
         --bind "enter:accept"
         --bind "ctrl-o:execute($hunk_pager_cmd)"
