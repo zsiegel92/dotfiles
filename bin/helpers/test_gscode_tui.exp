@@ -226,10 +226,10 @@ proc check_open_keys {gscode} {
 }
 
 proc expect_picker_text {id text} {
-    expect -i $id {
-        -ex $text {}
-        timeout { fail "picker did not show: $text" }
-        eof { fail "picker exited before showing: $text" }
+    expect -i $id -ex $text {} timeout {
+        fail "picker did not show: $text"
+    } eof {
+        fail "picker exited before showing: $text"
     }
 }
 
