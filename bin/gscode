@@ -3,7 +3,8 @@
 # Usage: gscode [-s|--side-by-side] [-b <branch-or-ref> | --branch <branch-or-ref> | -g|--graph|--tree | -c <A..B|A...B> | --compare <A..B|A...B>] [query]
 #
 # Keys in the picker:
-#   Enter    open the selected file in VS Code, or enter the interactive hunk pager from the side-by-side preview
+#   Enter    open the selected file in VS Code
+#   Ctrl-O   open the selected file in the interactive side-by-side hunk pager
 #   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter, opens without leaving fzf
 #   Ctrl-H   open the current changeset with `hunk diff`
 #   Ctrl-D   open the selected file in `code --diff`
@@ -50,7 +51,8 @@ Side-by-side mode (-s/--side-by-side) starts in the hunk-oriented side-by-side p
 Picker rows use `(status) path (+added -deleted)`. Untracked files appear as `A`; binary line counts appear as `?`.
 
 Keys:
-  Enter       open the selected file in VS Code; from the side-by-side preview, open the interactive hunk pager
+  Enter       open the selected file in VS Code
+  Ctrl-O      open the selected file in the interactive side-by-side hunk pager
   Open+stay   Ctrl-Enter, or Alt-Enter when fzf cannot bind Ctrl-Enter
   Ctrl-J/K    decrease/increase the space allocated to the file selector
   Ctrl-H      open the current changeset with hunk diff
@@ -68,7 +70,7 @@ Hunk diff view (press Ctrl-H from either preview):
   Use Hunk's own review controls
   Ctrl-C        close Hunk and return to the gscode picker
 
-Interactive side-by-side pager (press Enter from the side-by-side preview):
+Interactive side-by-side pager (press Ctrl-O from either preview):
   Up/Down, j/k scroll one line
   Space/b      page forward/backward
   n/N          jump to the next/previous hunk
@@ -347,25 +349,6 @@ open_hunk_diff() {
     else
         "${hunk_command[@]}" < /dev/tty > /dev/tty 2>&1
     fi
-}
-
-enter_preview_action() {
-    local base_ref="$1" f="$2" quoted_self quoted_f pager_command
-
-    if [ "$FZF_PREVIEW_LABEL" != "side-by-side hunks" ]; then
-        print -r -- accept
-        return
-    fi
-
-    quoted_self=${(q)SELF}
-    quoted_f=${(q)f}
-    if [ -n "$base_ref" ]; then
-        local quoted_base_ref=${(q)base_ref}
-        pager_command="$quoted_self --page-side-by-side --branch $quoted_base_ref $quoted_f"
-    else
-        pager_command="$quoted_self --page-side-by-side $quoted_f"
-    fi
-    print -r -- "execute[$pager_command]"
 }
 
 preview_content_query_arg() {
@@ -723,7 +706,7 @@ if [ "$1" = "--fzf-header" ]; then
 fi
 
 # Internal: invoked by fzf preview and nested-view bindings.
-if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--toggle-current-file" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--enter-preview" ] || [ "$1" = "--fit-preview" ] || [ "$1" = "--adjust-selector" ]; then
+if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ "$1" = "--hunk-diff" ] || [ "$1" = "--toggle-preview" ] || [ "$1" = "--toggle-current-file" ] || [ "$1" = "--escape-preview" ] || [ "$1" = "--fit-preview" ] || [ "$1" = "--adjust-selector" ]; then
     internal_action="$1"
     shift
     base_ref=
@@ -754,9 +737,6 @@ if [ "$1" = "--preview-side-by-side" ] || [ "$1" = "--page-side-by-side" ] || [ 
             else
                 print -r -- abort
             fi
-            ;;
-        --enter-preview)
-            enter_preview_action "$base_ref" "$1"
             ;;
         --fit-preview)
             fit_preview_action "$1" "$2"
@@ -904,15 +884,15 @@ if [ -n "$base_ref" ]; then
         diff_sides_label="$base_ref vs working"
     fi
     quoted_base_ref=${(q)base_ref}
-    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($diff_sides_label) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header_base="enter: code · ctrl-o: hunk pager · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff ($diff_sides_label) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file --branch $quoted_base_ref {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff --branch $quoted_base_ref)"
-    preview_enter_cmd="$quoted_self --enter-preview --branch $quoted_base_ref {2}"
+    hunk_pager_cmd="$quoted_self --page-side-by-side --branch $quoted_base_ref {2}"
 else
-    header_base="enter: code · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
+    header_base="enter: code · ctrl-o: hunk pager · ctrl-h: Hunk changeset (Ctrl-C returns) · $open_stay_key_label: open+stay · ctrl-d: code --diff (HEAD vs working) · ctrl-p: current file · ctrl-s: toggle side-by-side · ctrl-x: copy path · ctrl-j/k: selector −/+"
     diff_bind="ctrl-d:execute($quoted_self --diff-file {2})"
     hunk_bind="ctrl-h:execute($quoted_self --hunk-diff)"
-    preview_enter_cmd="$quoted_self --enter-preview {2}"
+    hunk_pager_cmd="$quoted_self --page-side-by-side {2}"
 fi
 
 changed_file_records=$(changed_file_records_for_mode "$base_ref")
@@ -1052,7 +1032,8 @@ run_picker() {
         --bind "ctrl-s:transform($preview_toggle_cmd)+transform($fit_preview_cmd)"
         --bind "ctrl-w:transform($query_mode_toggle_cmd)"
         --bind "esc:transform($preview_escape_cmd)"
-        --bind "enter:transform($preview_enter_cmd)"
+        --bind "enter:accept"
+        --bind "ctrl-o:execute($hunk_pager_cmd)"
         --bind "ctrl-j:transform($adjust_selector_cmd decrease),ctrl-k:transform($adjust_selector_cmd increase)"
         --preview "$preview_cmd"
     )

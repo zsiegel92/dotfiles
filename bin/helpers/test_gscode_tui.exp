@@ -148,6 +148,83 @@ proc check_preview_scroll_keys {gscode} {
     puts "PASS: Alt-Up/Down scroll by line and Alt-Shift-Up/Down scroll by page"
 }
 
+# Stub only VS Code so Enter can be checked without launching the editor.
+# The pager itself runs with real delta/less inside the pseudo-terminal.
+proc check_open_keys {gscode} {
+    set repo [exec mktemp -d -t gscode-open-test]
+    set git [list git -C $repo -c user.name=gscode-test -c user.email=gscode-test@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null]
+    exec {*}$git init -q
+    set fixture [open [file join $repo {changed file.txt}] w]
+    puts $fixture original
+    close $fixture
+    exec {*}$git add .
+    exec {*}$git commit -q -m add
+    set fixture [open [file join $repo {changed file.txt}] w]
+    puts $fixture changed
+    close $fixture
+    file mkdir [file join $repo stubs]
+    set stub [open [file join $repo stubs code] w]
+    puts $stub {#!/bin/sh}
+    puts $stub {printf '%s\n' "$@" > "$GSCODE_OPEN_LOG"}
+    puts $stub {echo GSCODE_TEST_OPENED}
+    close $stub
+    file attributes [file join $repo stubs code] -permissions 0755
+    set open_log [file join $repo opened]
+    set excludes [open [file join $repo .git info exclude] a]
+    puts $excludes "stubs/\nopened"
+    close $excludes
+
+    foreach mode {unified side-by-side toggled} {
+        file delete -force $open_log
+        set arguments {}
+        if {$mode eq "side-by-side"} { set arguments [list -s] }
+        log_user 0
+        spawn -noecho sh -c {cd "$0" && export PATH="$0/stubs:$PATH" GSCODE_OPEN_LOG="$0/opened" && gscode="$1" && shift && exec "$gscode" "$@"} $repo $gscode {*}$arguments
+        set slave $spawn_out(slave,name)
+        exec stty -f $slave rows 40 columns 160
+        expect {
+            -re {changed file.txt} {}
+            timeout { fail "$mode picker did not start" }
+            eof { fail "$mode picker exited before starting" }
+        }
+        if {$mode eq "toggled"} {
+            send "\023"
+            expect {
+                -re {side-by-side hunks} {}
+                timeout { fail "Ctrl-S did not enable side-by-side preview" }
+            }
+        }
+
+        send "\017"
+        expect {
+            -re {q back} {}
+            timeout { fail "$mode Ctrl-O did not open the hunk pager" }
+        }
+        if {[file exists $open_log]} { fail "Ctrl-O unexpectedly opened VS Code" }
+        send "q"
+        expect {
+            -re {ctrl-o: hunk pager} {}
+            timeout { fail "$mode picker did not return after closing the pager" }
+        }
+        after 200
+        send "\r"
+        expect {
+            -re {GSCODE_TEST_OPENED} {}
+            timeout { fail "$mode Enter did not open VS Code" }
+            eof { fail "$mode picker exited before opening VS Code" }
+        }
+        set log_handle [open $open_log r]
+        set opened [string trimright [read $log_handle] "\n"]
+        close $log_handle
+        assert_equal "$mode Enter passes the selected path" $opened {changed file.txt}
+        send "\003"
+        catch {expect eof}
+        catch {wait}
+        puts "PASS: $mode Enter opens VS Code and Ctrl-O opens the hunk pager"
+    }
+    file delete -force $repo
+}
+
 proc resize_smoke {gscode mode arguments} {
     log_user 0
     spawn -noecho $gscode {*}$arguments
@@ -211,6 +288,7 @@ check_current_file_preview_actions $gscode
 check_query_toggle_action $gscode
 check_compare_option_validation $gscode
 check_preview_scroll_keys $gscode
+check_open_keys $gscode
 resize_smoke $gscode "unified mode" [list -b HEAD~1]
 resize_smoke $gscode "side-by-side mode" [list -s -b HEAD~1]
 resize_smoke $gscode "compare mode" [list -c HEAD~1..HEAD]
