@@ -232,15 +232,13 @@ preview_file_side_by_side() {
         return 1
     fi
 
-    cols="${FZF_PREVIEW_COLUMNS:-}"
-    if [ -z "$cols" ] || [ "$cols" -lt 40 ]; then
-        cols=200
-    fi
+    cols="${FZF_PREVIEW_COLUMNS:-200}"
 
-    if is_one_sided_file "$base_ref" "$f"; then
-        side_by_side_source_diff "$base_ref" "$f" | delta --line-numbers --width "$cols" --paging=never
+    # Use a full-width diff when there is too little room for two columns.
+    if [ "$cols" -lt 40 ] || is_one_sided_file "$base_ref" "$f"; then
+        side_by_side_source_diff "$base_ref" "$f" | delta --line-numbers --width "$cols" --max-line-length 0 --paging=never
     else
-        side_by_side_source_diff "$base_ref" "$f" | delta --side-by-side --line-numbers --width "$cols" --paging=never
+        side_by_side_source_diff "$base_ref" "$f" | delta --side-by-side --line-numbers --width "$cols" --wrap-max-lines unlimited --paging=never
     fi
 }
 
@@ -426,7 +424,7 @@ stacked_preview_window() {
     # Explicitly replace the narrow-width fallback too. change-preview-window
     # otherwise inherits the unified view's fixed 70% fallback when Ctrl-S
     # switches into this layout.
-    print -r -- "down,${preview_lines},border-top,nowrap,<100(down,${preview_lines},border-top,nowrap)"
+    print -r -- "down,${preview_lines},border-top,wrap,<100(down,${preview_lines},border-top,wrap)"
 }
 
 unified_preview_window() {
@@ -478,7 +476,7 @@ fit_preview_action() {
 
 adjust_selector_action() {
     local direction="$1"
-    local total_size selector_size preview_size step min_selector_size min_preview_size orientation border wrap fallback
+    local total_size selector_size preview_size step min_selector_size min_preview_size orientation border fallback
 
     case "$direction" in
         decrease|increase) ;;
@@ -508,7 +506,6 @@ adjust_selector_action() {
         min_preview_size=20
         orientation=right
         border=border-left
-        wrap=wrap
     else
         total_size="${FZF_LINES:-}"
         selector_size=$((total_size - FZF_PREVIEW_LINES))
@@ -516,11 +513,6 @@ adjust_selector_action() {
         min_preview_size=5
         orientation=down
         border=border-top
-        if [ "$FZF_PREVIEW_LABEL" = "side-by-side hunks" ]; then
-            wrap=nowrap
-        else
-            wrap=wrap
-        fi
     fi
 
     case "$total_size" in
@@ -540,11 +532,11 @@ adjust_selector_action() {
     preview_size=$((total_size - selector_size))
 
     if [ "$orientation" = right ]; then
-        fallback="<100(down,70%,border-top,$wrap)"
+        fallback="<100(down,70%,border-top,wrap)"
     else
-        fallback="<100(down,$preview_size,border-top,$wrap)"
+        fallback="<100(down,$preview_size,border-top,wrap)"
     fi
-    print -r -- "change-preview-window[$orientation,$preview_size,$border,$wrap,$fallback]"
+    print -r -- "change-preview-window[$orientation,$preview_size,$border,wrap,$fallback]"
 }
 
 open_diff_file() {

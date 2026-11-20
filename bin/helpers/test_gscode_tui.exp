@@ -32,7 +32,7 @@ proc check_layout_actions {gscode} {
     assert_equal "many-match unified layout" $unified_many {change-preview-window[right,50%,border-left,wrap,<100(down,50%,border-top,wrap)]}
 
     set side_by_side_one [exec env {FZF_PREVIEW_LABEL=side-by-side hunks} FZF_LINES=40 FZF_COLUMNS=80 FZF_MATCH_COUNT=1 FZF_PREVIEW_LINES=20 $gscode --fit-preview short 94]
-    assert_equal "one-match side-by-side layout" $side_by_side_one {change-preview-window[down,34,border-top,nowrap,<100(down,34,border-top,nowrap)]}
+    assert_equal "one-match side-by-side layout" $side_by_side_one {change-preview-window[down,34,border-top,wrap,<100(down,34,border-top,wrap)]}
 
     puts "PASS: match-aware layout actions"
 }
@@ -193,7 +193,7 @@ proc check_open_keys {gscode} {
     exec {*}$git add .
     exec {*}$git commit -q -m add
     set fixture [open [file join $repo {changed file.txt}] w]
-    puts $fixture changed
+    puts $fixture "[string repeat x 400] [string repeat Z 20]"
     close $fixture
     file mkdir [file join $repo stubs]
     set stub [open [file join $repo stubs code] w]
@@ -212,9 +212,7 @@ proc check_open_keys {gscode} {
         set arguments {}
         if {$mode eq "side-by-side"} { set arguments [list -s] }
         log_user 0
-        spawn -noecho sh -c {cd "$0" && export PATH="$0/stubs:$PATH" GSCODE_OPEN_LOG="$0/opened" && gscode="$1" && shift && exec "$gscode" "$@"} $repo $gscode {*}$arguments
-        set slave $spawn_out(slave,name)
-        exec stty -f $slave rows 40 columns 160
+        spawn -noecho sh -c {cd "$0" && stty rows 40 cols 160 && export PATH="$0/stubs:$PATH" GSCODE_OPEN_LOG="$0/opened" && gscode="$1" && shift && exec "$gscode" "$@"} $repo $gscode {*}$arguments
         expect {
             -re {changed file.txt} {}
             timeout { fail "$mode picker did not start" }
@@ -226,6 +224,9 @@ proc check_open_keys {gscode} {
                 -re {side-by-side hunks} {}
                 timeout { fail "Ctrl-S did not enable side-by-side preview" }
             }
+        }
+        if {$mode eq "side-by-side"} {
+            expect_picker_text $spawn_id ZZZZZZ
         }
 
         help_round_trip $spawn_id "\033"
